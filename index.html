@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d3b56">
+<title>Gulp!</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Nunito:wght@600;800&display=swap" rel="stylesheet">
+<style>
+  :root { --bg: #0d3b56; --panel: #f2fbff; --btn: #d3f0fa; --text: #10334a; --muted: #4d7489; --orange: #ff7a2f; --deep: #c4541a; --line: #7fd3ee; --good: #2ec98a; --bad: #ff4d4d; }
+  /* No scrolling, pinch/double-tap zoom, pull-to-refresh, text selection or long-press menu while playing on a phone. */
+  html, body {
+    margin: 0; height: 100%; background: var(--bg); overflow: hidden;
+    touch-action: none; overscroll-behavior: none;
+    user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+    font: 600 16px/1.4 Nunito, system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--text);
+  }
+  #view { position: fixed; top: 0; display: block; }
+  /* Menus are plain HTML on top of the 3D canvas: real buttons are easy to tap, style, and use with a keyboard. */
+  #ui { position: fixed; inset: 0; z-index: 2; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgb(8 40 60 / .35); }
+  #ui[hidden], .screen[hidden] { display: none; }
+  .fixed[hidden], #hud[hidden], #banner[hidden], #stick[hidden] { display: none !important; }
+  .screen { width: min(380px, 100%); max-height: 100%; overflow-y: auto; touch-action: pan-y; box-sizing: border-box; background: var(--panel); border: 3px solid var(--line); border-radius: 22px; padding: 22px; display: flex; flex-direction: column; gap: 12px; text-align: center; box-shadow: 0 8px 0 var(--line), 0 12px 30px rgb(0 20 40 / .35); }
+  h1, h2 { font-family: "Lilita One", Nunito, sans-serif; font-weight: 400; margin: 0 0 4px; line-height: 1; letter-spacing: .02em; }
+  h1 { font-size: 4rem; color: var(--orange); text-shadow: 0 4px 0 var(--deep), 0 8px 0 rgb(0 40 70 / .25); }
+  h2 { font-size: 2rem; color: var(--orange); }
+  .screen p { margin: 0; color: var(--muted); }
+  button { font: inherit; font-weight: 800; font-size: 1.1rem; min-height: 48px; border: 0; border-radius: 14px; background: var(--btn); color: var(--text); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+  button.primary { background: var(--orange); color: #fff; box-shadow: 0 4px 0 var(--deep); }
+  button:hover { filter: brightness(1.05); }
+  button:active { transform: translateY(2px); }
+  button:focus-visible, .row:has(input:focus-visible) { outline: 3px solid var(--good); outline-offset: 2px; }
+  a { color: var(--deep); padding: 8px; font-weight: 800; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 48px; padding: 0 14px; background: var(--btn); border-radius: 14px; cursor: pointer; }
+  .row input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--orange); }
+  .hint { font-size: .9rem; text-align: left; }
+  .big { font-size: 1.4rem; color: var(--text) !important; font-weight: 800; }
+
+  /* HUD: score and zone on top, then the food chain bar (what you can eat) and your growth meter. */
+  #hud { position: fixed; z-index: 1; top: 0; left: 0; right: 0; padding: max(8px, env(safe-area-inset-top)) 68px 0 max(12px, env(safe-area-inset-left)); pointer-events: none; color: #fff; text-shadow: 0 2px 0 rgb(0 30 50 / .5); }
+  .top { display: flex; align-items: baseline; gap: 10px; min-height: 48px; }
+  #score { font-family: "Lilita One", sans-serif; font-size: 1.9rem; line-height: 48px; }
+  #combo { font-family: "Lilita One", sans-serif; font-size: 1.4rem; color: #ffe066; }
+  #where { margin-left: auto; font-weight: 800; font-size: .9rem; opacity: .9; text-align: right; }
+  #chain { display: flex; gap: 6px; margin-top: 2px; }
+  .chip { position: relative; width: 52px; height: 40px; border-radius: 12px; background: rgb(255 255 255 / .2); border: 3px solid transparent; display: flex; align-items: center; justify-content: center; transition: border-color .3s, background .3s, opacity .3s; }
+  .chip img { width: 48px; height: 32px; }
+  .chip.food { border-color: var(--good); background: rgb(46 201 138 / .3); }
+  .chip.danger { border-color: var(--bad); background: rgb(255 77 77 / .25); }
+  .chip.same { opacity: .65; }
+  .chip i { position: absolute; right: -6px; bottom: -8px; font-style: normal; font-size: .75rem; font-weight: 800; background: var(--bad); border-radius: 8px; padding: 0 5px; text-shadow: none; }
+  .chip.food i { background: var(--good); }
+  .chip.same i { background: #6b8796; }
+  #meterRow { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  #youIcon { width: 42px; height: 28px; }
+  #meter { position: relative; flex: 1; max-width: 300px; height: 14px; border-radius: 8px; background: rgb(0 30 50 / .45); border: 2px solid rgb(255 255 255 / .7); overflow: hidden; }
+  #meterFill { position: absolute; inset: 0 auto 0 0; width: 0; background: linear-gradient(90deg, #ffb347, var(--orange)); transition: width .25s; }
+  #meter s { position: absolute; top: 0; bottom: 0; width: 2px; background: rgb(255 255 255 / .8); }
+  #banner { position: fixed; z-index: 1; left: 0; right: 0; top: 34%; display: flex; flex-direction: column; align-items: center; pointer-events: none; color: #fff; text-align: center; animation: pop .35s ease-out; }
+  #bannerTitle { font-family: "Lilita One", sans-serif; font-size: 2.6rem; font-weight: 400; color: #ffe066; text-shadow: 0 4px 0 var(--deep), 0 6px 14px rgb(0 0 0 / .35); }
+  #bannerSub { font-weight: 800; text-shadow: 0 2px 4px rgb(0 0 0 / .5); padding: 0 16px; }
+  @keyframes pop { from { transform: scale(.6); opacity: 0; } }
+  #pops { position: fixed; inset: 0; z-index: 1; pointer-events: none; overflow: hidden; }
+  .pop { position: absolute; transform: translate(-50%, -50%); font-family: "Lilita One", sans-serif; color: #fff; font-size: 1.2rem; text-shadow: 0 2px 0 rgb(0 30 50 / .6); animation: rise .8s ease-out forwards; }
+  .pop.combo { color: #ffe066; font-size: 1.5rem; }
+  @keyframes rise { to { transform: translate(-50%, -160%); opacity: 0; } }
+  /* The floating joystick: a ring where your thumb went down and a knob that follows it. */
+  #stick { position: fixed; z-index: 1; width: 112px; height: 112px; margin: -56px 0 0 -56px; border-radius: 50%; border: 3px solid rgb(255 255 255 / .35); background: rgb(255 255 255 / .08); pointer-events: none; }
+  #knob { position: absolute; left: 36px; top: 36px; width: 40px; height: 40px; border-radius: 50%; background: rgb(255 255 255 / .45); }
+  .fixed { position: fixed; z-index: 1; }
+  #pauseBtn { top: max(10px, env(safe-area-inset-top)); right: max(10px, env(safe-area-inset-right)); width: 48px; padding: 0; opacity: .9; font-size: 1rem; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.186.1/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.1/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="hud" hidden>
+  <div class="top"><span id="score">0</span><span id="combo"></span><span id="where"></span></div>
+  <div id="chain"></div>
+  <div id="meterRow"><img id="youIcon" alt=""><div id="meter"><i id="meterFill"></i><s style="left:33.3%"></s><s style="left:66.6%"></s></div></div>
+</div>
+<div id="banner" hidden><b id="bannerTitle"></b><span id="bannerSub"></span></div>
+<div id="pops"></div>
+<div id="stick" hidden><i id="knob"></i></div>
+
+<div id="ui">
+  <section class="screen" id="main">
+    <h1>GULP!</h1>
+    <p>Eat smaller fish to grow. Steer clear of bigger ones. Fill your meter to clear the reef, then dive deeper.</p>
+    <p class="big" id="mainBest"></p>
+    <button class="primary" data-action="play">Play</button>
+    <button data-action="settings">Settings</button>
+    <a href="../">&larr; Back to Arcade</a>
+  </section>
+
+  <section class="screen" id="settings" hidden>
+    <h2>SETTINGS</h2>
+    <label class="row">Sound <input type="checkbox" id="sound"></label>
+    <label class="row">Vibration <input type="checkbox" id="vibrate"></label>
+    <p class="hint"><b>Phone:</b> touch anywhere and drag, like a joystick. The further you drag, the faster you swim. <b>Computer:</b> your fish follows the mouse, or use the arrow keys or WASD.</p>
+    <p class="hint">The bar at the top shows what you can eat (green) and what can eat you (red). Eat to fill your meter: you grow at each mark, and a full meter clears the reef. One bite from a bigger fish and the run is over.</p>
+    <button data-action="back">Back</button>
+  </section>
+
+  <section class="screen" id="pause" hidden>
+    <h2>PAUSED</h2>
+    <p id="pauseInfo"></p>
+    <button class="primary" data-action="resume">Resume</button>
+    <button data-action="settings">Settings</button>
+    <button data-action="menu">Main menu</button>
+  </section>
+
+  <section class="screen" id="over" hidden>
+    <h2>GULPED!</h2>
+    <p id="overWho"></p>
+    <p class="big" id="overScore"></p>
+    <p id="overBest"></p>
+    <button class="primary" data-action="play">Play again</button>
+    <button data-action="menu">Main menu</button>
+  </section>
+</div>
+<button class="fixed" id="pauseBtn" aria-label="Pause" hidden>&#10074;&#10074;</button>
+
+<script src="js/data.js"></script>
+<script src="js/rules.js"></script>
+<script src="js/ui.js"></script>
+<script type="module" src="js/game.js"></script>
+</body>
+</html>
