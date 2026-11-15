@@ -8,8 +8,9 @@ No build step and no asset files: three.js loads from a CDN through an import ma
 - **Repo:** https://github.com/CraigSubnarine/threejs-gulp
 - **Run locally:** the `gamedev` preview server at http://localhost:8765/threejs-gulp/ (or `node tools/server.js` from a script)
 - **Controls:**
-  - **Phone:** touch anywhere and drag, like a joystick. The further you drag, the faster you swim.
-  - **Computer:** the fish follows the mouse, or use the arrow keys or WASD.
+  - **Phone:** touch anywhere and drag, like a joystick. The further you drag, the faster you swim. Tap **BOOST** (bottom right) for a burst of speed.
+  - **Computer:** the fish follows the mouse, or use the arrow keys or WASD. Click or press Space to boost.
+  - **Boost:** about half a second at 2.3× speed, the way you're steering. The button's ring then refills like a clock over 4 s, and it glows when it's ready (`BOOST` in `data.js`).
   - **Pause:** the top-right button, or Esc / P.
 - **Status:** Step 1 of 3 is live: the Sunny Reef and the core loop. The full plan is in `GameDev/gulp-plan.md`.
 

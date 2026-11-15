@@ -22,6 +22,9 @@ const PLAYER = {
   safe: 2,          // seconds nothing can eat you at the start of a zone
 };
 
+// The boost button: a burst of speed, then it has to recharge.
+const BOOST = { speed: 2.3, time: 0.55, recharge: 4 }; // × your speed, seconds it lasts, seconds to recharge
+
 const TUNING = {
   population: 26,   // fish alive around you at once
   spawnEvery: 0.35, // seconds between spawns while below the population

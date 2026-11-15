@@ -62,6 +62,7 @@ function showScreen(id) {
   if (id) $(id).querySelector('.primary, button')?.focus({ preventScroll: true });
   const playing = app.state === 'playing';
   $('pauseBtn').hidden = !playing;
+  $('boostBtn').hidden = !playing;
   $('hud').hidden = !(playing || app.state === 'paused');
   if (!playing) endStick();
 }
@@ -121,6 +122,8 @@ $('ui').addEventListener('click', e => {
   else if (action === 'back') showScreen(app.settingsFrom);
 });
 $('pauseBtn').addEventListener('click', pauseGame);
+// Boost fires the moment a finger lands (not on release), so it works while the other thumb holds the joystick.
+$('boostBtn').addEventListener('pointerdown', e => { e.preventDefault(); window.game?.boost(); });
 for (const id of ['sound', 'vibrate']) {
   $(id).checked = settings[id];
   $(id).addEventListener('change', e => { settings[id] = e.target.checked; saveSettings(); });
@@ -131,6 +134,10 @@ addEventListener('keydown', e => {
   if (MOVE_KEYS.includes(key)) {
     input.keys.add(key);
     if (app.state === 'playing') e.preventDefault();
+  }
+  if (key === ' ' && app.state === 'playing') {
+    e.preventDefault();
+    if (!e.repeat) game.boost();
   }
   if (key !== 'escape' && key !== 'p') return;
   if (app.state === 'playing') pauseGame();
@@ -153,7 +160,11 @@ function endStick(e) {
 }
 addEventListener('pointerdown', e => {
   if (e.target.closest?.('button, a, label, input') || app.state !== 'playing') return; // menu taps aren't game input
-  if (e.pointerType === 'mouse') { input.mouse = { x: e.clientX, y: e.clientY }; return; }
+  if (e.pointerType === 'mouse') { // the fish follows the mouse; a click boosts
+    input.mouse = { x: e.clientX, y: e.clientY };
+    if (e.button === 0) game.boost();
+    return;
+  }
   if (stickId !== null) return;
   stickId = e.pointerId;
   ox = e.clientX;

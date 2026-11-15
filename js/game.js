@@ -57,6 +57,7 @@ function resize() {
   renderer.domElement.style.left = `${viewLeft}px`;
   for (const id of ['hud', 'banner']) { $(id).style.left = $(id).style.right = `${viewLeft}px`; } // line up with the sea, not the window
   $('pauseBtn').style.right = `calc(${viewLeft}px + max(10px, env(safe-area-inset-right)))`;
+  $('boostBtn').style.right = `calc(${viewLeft}px + max(18px, env(safe-area-inset-right)))`;
   camera.aspect = viewW / viewH;
   camera.updateProjectionMatrix();
   render();
@@ -137,6 +138,14 @@ function updateHud() {
   const fill = `${(G.meter / METER_NEED) * 100}%`;
   if (shown.fill !== fill) $('meterFill').style.width = shown.fill = fill;
   if (shown.tier !== P.tier) { shown.tier = P.tier; updateChain(); }
+  const charge = Math.round(P.charge * 50) / 50; // the boost button fills up like a clock while it recharges
+  if (shown.charge !== charge) {
+    if (charge >= 1 && shown.charge < 1) beep(1200, 50, 0.025); // a little ping when it's ready again
+    shown.charge = charge;
+    const b = $('boostBtn');
+    b.style.setProperty('--charge', charge);
+    b.classList.toggle('ready', charge >= 1);
+  }
 }
 
 // ---------- Game state ----------
@@ -144,7 +153,7 @@ function updateHud() {
 const G = { mode: 'menu', phase: 'swim', zone: null, scenery: null, depth: 1, seed: 0, spawner: null, fish: [], t: 0,
   spawnT: 0, phaseT: 0, score: 0, combo: 0, comboT: 0, meter: 0, eatenBy: '', player: null };
 
-const P = G.player = { obj: makeFish(PLAYER_SPEC), x: 0, y: 0, vx: 0, vy: 0, len: FISH_LEN[1], tier: 1, face: 1, pulse: 0, safe: 0, alive: false, phase: 0, gulp: 0 };
+const P = G.player = { obj: makeFish(PLAYER_SPEC), x: 0, y: 0, vx: 0, vy: 0, len: FISH_LEN[1], tier: 1, face: 1, pulse: 0, safe: 0, alive: false, phase: 0, gulp: 0, boost: 0, charge: 1 };
 scene.add(P.obj.root);
 P.obj.root.visible = false;
 
@@ -243,11 +252,36 @@ function pose(e, dt) {
   o.pitch.rotation.y = -Math.sin(e.phase - 0.6) * 0.13 * swing;
 }
 
+// Boost: a burst of speed the way you're steering (or facing), then the button recharges.
+function boost() {
+  if (app.state !== 'playing' || !P.alive || P.charge < 1) return;
+  let { x, y } = stick();
+  const m = Math.hypot(x, y);
+  if (m < 0.2) { x = P.face; y = 0; } else { x /= m; y /= m; }
+  const s = PLAYER.speed * BOOST.speed;
+  P.vx = x * s;
+  P.vy = y * s;
+  P.boost = BOOST.time;
+  P.charge = 0;
+  burst(P.x, P.y, 14, 160);
+  beep(220, 260, 0.05, 'sawtooth', 3);
+  buzz(30);
+}
+
 function updatePlayer(dt) {
   if (P.alive) {
-    const s = stick();
-    P.vx += (s.x * PLAYER.speed - P.vx) * Math.min(1, dt * PLAYER.turn);
-    P.vy += (s.y * PLAYER.speed - P.vy) * Math.min(1, dt * PLAYER.turn);
+    const s = { ...stick() }; // a copy: the joystick's own vector mustn't change
+    let speed = PLAYER.speed, turn = PLAYER.turn;
+    if (P.boost > 0) { // boosting: full speed ahead, steering still works
+      P.boost -= dt;
+      speed *= BOOST.speed;
+      turn *= 2;
+      const m = Math.hypot(s.x, s.y), v = Math.hypot(P.vx, P.vy) || 1;
+      if (m < 0.2) { s.x = P.vx / v; s.y = P.vy / v; } else { s.x /= m; s.y /= m; }
+      if (Math.random() < 0.6) burst(P.x - P.vx / v * P.len * 0.5, P.y - P.vy / v * P.len * 0.5, 1, 30); // bubble trail
+    } else P.charge = Math.min(1, P.charge + dt / BOOST.recharge);
+    P.vx += (s.x * speed - P.vx) * Math.min(1, dt * turn);
+    P.vy += (s.y * speed - P.vy) * Math.min(1, dt * turn);
     P.x = clamp(P.x + P.vx * dt, -WORLD.x + 40, WORLD.x - 40);
     P.y = clamp(P.y + P.vy * dt, -WORLD.y + P.len * 0.25, WORLD.y - P.len * 0.25);
   }
@@ -426,7 +460,7 @@ function startRun(seed = Math.floor(Math.random() * 1e9)) {
   G.score = 0;
   G.combo = 0;
   G.comboT = 0;
-  Object.assign(P, { alive: true, gulp: 0, len: FISH_LEN[1], pulse: 0, face: 1 });
+  Object.assign(P, { alive: true, gulp: 0, len: FISH_LEN[1], pulse: 0, face: 1, boost: 0, charge: 1 });
   P.obj.root.visible = true;
   cam.dist = camDist(VIEW_H[1]);
   shown = {};
@@ -448,7 +482,7 @@ function toMenu() {
 let last = 0;
 window.game = {
   manual: false, // the playtest sets this and steps the game itself
-  startRun, toMenu, update, render, spawnFish, G, camera,
+  startRun, toMenu, update, render, spawnFish, boost, G, camera,
   get info() { return { score: G.score, depth: G.depth, zone: G.zone.name, tier: P.tier }; },
 };
 addEventListener('resize', resize);

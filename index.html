@@ -71,6 +71,15 @@
   #knob { position: absolute; left: 36px; top: 36px; width: 40px; height: 40px; border-radius: 50%; background: rgb(255 255 255 / .45); }
   .fixed { position: fixed; z-index: 1; }
   #pauseBtn { top: max(10px, env(safe-area-inset-top)); right: max(10px, env(safe-area-inset-right)); width: 48px; padding: 0; opacity: .9; font-size: 1rem; }
+  /* Boost: a ring that fills up like a clock while it recharges, and glows when it's ready. */
+  #boostBtn { bottom: max(18px, env(safe-area-inset-bottom)); right: max(18px, env(safe-area-inset-right)); width: 80px; height: 80px; padding: 0; border-radius: 50%; touch-action: none;
+    background: conic-gradient(#ffd166 calc(var(--charge, 1) * 1turn), rgb(0 30 50 / .5) 0); box-shadow: 0 4px 0 rgb(0 30 50 / .35); }
+  #boostBtn span { position: absolute; inset: 6px; border-radius: 50%; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgb(13 59 86 / .88); color: rgb(255 255 255 / .6); font-family: "Lilita One", sans-serif; font-weight: 400; font-size: .85rem; line-height: 1; letter-spacing: .03em; }
+  #boostBtn span b { font-size: 1.6rem; font-weight: 400; }
+  #boostBtn.ready span { background: var(--orange); color: #fff; }
+  #boostBtn.ready { animation: glow 1.4s ease-in-out infinite; }
+  #boostBtn:active { transform: scale(.94); }
+  @keyframes glow { 50% { box-shadow: 0 4px 0 rgb(0 30 50 / .35), 0 0 0 7px rgb(255 209 102 / .45); } }
 </style>
 <script type="importmap">
 { "imports": {
@@ -103,7 +112,7 @@
     <h2>SETTINGS</h2>
     <label class="row">Sound <input type="checkbox" id="sound"></label>
     <label class="row">Vibration <input type="checkbox" id="vibrate"></label>
-    <p class="hint"><b>Phone:</b> touch anywhere and drag, like a joystick. The further you drag, the faster you swim. <b>Computer:</b> your fish follows the mouse, or use the arrow keys or WASD.</p>
+    <p class="hint"><b>Phone:</b> touch anywhere and drag, like a joystick. The further you drag, the faster you swim. Tap <b>BOOST</b> (bottom right) for a burst of speed; it takes a few seconds to recharge. <b>Computer:</b> your fish follows the mouse, or use the arrow keys or WASD. Click or press Space to boost.</p>
     <p class="hint">The bar at the top shows what you can eat (green) and what can eat you (red). Eat to fill your meter: you grow at each mark, and a full meter clears the reef. One bite from a bigger fish and the run is over.</p>
     <button data-action="back">Back</button>
   </section>
@@ -126,6 +135,7 @@
   </section>
 </div>
 <button class="fixed" id="pauseBtn" aria-label="Pause" hidden>&#10074;&#10074;</button>
+<button class="fixed ready" id="boostBtn" aria-label="Boost" hidden><span><b>&raquo;</b>BOOST</span></button>
 
 <script src="js/data.js"></script>
 <script src="js/rules.js"></script>

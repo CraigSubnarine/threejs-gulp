@@ -115,10 +115,38 @@ async function run(browser, name, options) {
   await page.keyboard.up('ArrowDown');
   check(`${name}: arrow keys steer too`, p3.y < p2.y - 80, `${Math.round(p3.y - p2.y)}`);
 
+  // ---------- Boost ----------
+  const boostState = () => page.evaluate(() => { const p = __P(), b = document.getElementById('boostBtn');
+    return { shown: !b.hidden, ready: b.classList.contains('ready'), boost: p.boost > 0, fast: Math.hypot(p.vx, p.vy) > PLAYER.speed * 1.5, charge: +p.charge.toFixed(2) }; });
+  const b0 = await boostState();
+  check(`${name}: the boost button shows, ready`, b0.shown && b0.ready, JSON.stringify(b0));
+  await tap('#boostBtn');
+  await page.evaluate(() => __step(6));
+  const b1 = await boostState();
+  check(`${name}: tapping boost gives a burst of speed and starts the recharge`, b1.boost && b1.fast && !b1.ready && b1.charge === 0, JSON.stringify(b1));
+  await page.evaluate(() => __step(40));
+  await tap('#boostBtn');
+  const b2 = await boostState();
+  check(`${name}: no boost while it's recharging`, !b2.boost && !b2.ready, JSON.stringify(b2));
+  await page.evaluate(() => __step(60 * 1.5));
+  await shot('02b-boost-recharging');
+  await page.evaluate(() => __step(Math.ceil(60 * BOOST.recharge)));
+  const b3 = await boostState();
+  check(`${name}: the boost is ready again after the recharge`, b3.ready && b3.charge === 1, JSON.stringify(b3));
+  if (!options.hasTouch) {
+    await page.keyboard.press('Space');
+    check(`${name}: Space boosts`, (await boostState()).boost);
+  }
+  await page.evaluate(() => __step(60));
+
   // ---------- Eating, combos, growing ----------
   const eat1 = await page.evaluate(() => {
+    const g = game.G;
+    g.fish.forEach(f => (f.x += 5000)); // a clean slate: the boost checks may have eaten something already
+    __step(1);
+    Object.assign(g, { meter: 0, score: 0, comboT: 0 });
     __P().safe = 0;
-    const g = game.G, before = g.fish.length;
+    const before = g.fish.length;
     __put('minnow', 10, 0);
     __step(1);
     return { meter: g.meter, score: g.score, gone: g.fish.length === before };
