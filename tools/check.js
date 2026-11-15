@@ -73,6 +73,28 @@ check('schools come in groups', a.filter(x => x.species.group && !x.variant).eve
   check('a level\'s fish mix changes what shows up (more gobies in the Sandy Shallows)', gobies(sand) > gobies(garden) * 1.3);
 }
 
+// ---------- Apex predators ----------
+{
+  const [APEX, APEX_ATTACKS, apexContact, apexPhase, apexHp] = ['APEX', 'APEX_ATTACKS', 'apexContact', 'apexPhase', 'apexHp'].map(n => vm.runInThisContext(n));
+  for (const z of ZONES) {
+    const a = z.apex;
+    check(`${z.name}: has an apex with health, a taunt per moment and known attacks`, a && a.hp > 0 && a.intro && a.rage && a.defeat && a.phases.length >= 2
+      && a.phases.every(p => p.length && p.every(k => APEX_ATTACKS.includes(k))));
+  }
+  // An apex at (0, 0), 500 long, facing right: its tail is at x = -250, its head at x = 250.
+  const touch = (px, py) => apexContact(0, 0, 1, 0, 500, 50, px, py, 20);
+  check('touching its tail end is a bite on the apex', touch(-260, 0) === 'tail' && touch(-100, 60) === 'tail');
+  check('touching its front is its jaws', touch(200, 0) === 'head' && touch(265, 10) === 'head');
+  check('the jaws start at the front 40% of the body', touch(-250 + 500 * APEX.headShare - 5, 0) === 'tail' && touch(-250 + 500 * APEX.headShare + 5, 0) === 'head');
+  check('away from its body there is no contact', touch(0, 200) === null && touch(-400, 0) === null && touch(400, 0) === null);
+  check('facing the other way swaps tail and jaws', apexContact(0, 0, -1, 0, 500, 50, 200, 0, 20) === 'tail' && apexContact(0, 0, -1, 0, 500, 50, -200, 0, 20) === 'head');
+  const diag = Math.SQRT1_2;
+  check('it works at an angle too', apexContact(0, 0, diag, diag, 500, 50, 150, 150, 20) === 'head' && apexContact(0, 0, diag, diag, 500, 50, -150, -150, 20) === 'tail');
+  check('2 phases: the second starts at half health', apexPhase(6, 6, 2) === 0 && apexPhase(4, 6, 2) === 0 && apexPhase(3, 6, 2) === 1 && apexPhase(0, 6, 2) === 1);
+  check('3 phases split the bar in thirds', apexPhase(7, 9, 3) === 0 && apexPhase(6, 9, 3) === 1 && apexPhase(3, 9, 3) === 2);
+  check('apexes get tougher each time round', apexHp({ hp: 6 }, 0) === 6 && apexHp({ hp: 6 }, 1) === 9);
+}
+
 // ---------- Skill tree ----------
 check('3 branches of 5 nodes', SKILLS.length === 3 && SKILLS.every(b => b.nodes.length === 5));
 check('node n costs n points; everything costs 45', nodeCost(0) === 1 && nodeCost(4) === 5 && SKILLS.length * [0, 1, 2, 3, 4].reduce((t, i) => t + nodeCost(i), 0) === 45);

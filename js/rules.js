@@ -68,6 +68,21 @@ function makeSpawner(seed, zone, spot = {}) {
   };
 }
 
+// ---------- Apex predators ----------
+// Where something round (you: px, py, radius pr) touches a long fish whose body runs along its heading (hx, hy, a
+// unit vector) from tail to head, centred on (ax, ay). Returns null (not touching), 'tail' (the back part: you
+// bite it) or 'head' (its jaws: it bites you).
+function apexContact(ax, ay, hx, hy, len, r, px, py, pr) {
+  const tx = ax - hx * len / 2, ty = ay - hy * len / 2;                                   // the tail end
+  const s = Math.max(0, Math.min(1, ((px - tx) * hx + (py - ty) * hy) / len));             // 0 tail .. 1 head
+  if (Math.hypot(px - (tx + hx * len * s), py - (ty + hy * len * s)) > r + pr) return null;
+  return s > APEX.headShare ? 'head' : 'tail';
+}
+// Which phase an apex is in from its health: phases split the health bar evenly (2 phases: the second at half).
+const apexPhase = (hp, maxHp, phases) => Math.min(phases - 1, Math.floor((1 - hp / maxHp) * phases + 1e-9));
+// Its health: tougher each time round the zones.
+const apexHp = (apex, loop) => Math.round(apex.hp * (1 + APEX.toughness * loop));
+
 // ---------- Skill tree ----------
 const nodeId = (branch, i) => `${branch}${i + 1}`;           // fins1 .. scales5
 const nodeCost = i => i + 1;                                  // node n costs n points

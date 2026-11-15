@@ -41,6 +41,19 @@ const TUNING = {
   harder: 0.025,    // each level: fish +2.5% faster
 };
 
+// Apex predators: the boss at the end of each zone's last level. You bite its tail (the back part of its body);
+// its jaws (the front headShare of its body) eat you. Attacks come from APEX_ATTACKS; each apex lists them per phase.
+const APEX = {
+  headShare: 0.6,   // the front 40% of the body is jaws
+  inv: 0.6,         // seconds it can't be bitten again after a bite
+  bitePoints: 150,  // per point of damage
+  boostDamage: 2,   // a bite while boosting
+  bonus: 3000,      // × the level number, for beating it
+  view: 1.3,        // the camera shows this much more than at tier 3 during the fight
+  toughness: 0.5,   // each time round the zones, apexes get 50% more health
+};
+const APEX_ATTACKS = ['lunge', 'flurry']; // lunge: shake, then dash at you; flurry: three quick short lunges
+
 // Rare variants of ordinary fish. chance: share of spawns (before Treasure Nose).
 const VARIANT_CHANCE = 0.08;
 const VARIANTS = {
@@ -58,6 +71,12 @@ const ZONES = [
   {
     key: 'reef', name: 'Sunny Reef', sub: 'Warm, shallow and full of snacks',
     water: { top: 0x8be3f2, bottom: 0x1d86b0 }, sun: 1.9, sky: 0xd8f8ff, ground: 0x3a8fa8, floor: 0xf2d9a0,
+    // size: × a full-grown you; speed: circling speed × your base speed; lunge: dash speed × your base speed;
+    // tell: seconds of shaking before a lunge. Taunts are original lines.
+    apex: { key: 'barracuda', name: 'The Barracuda', short: 'Barracuda', size: 2.6, hp: 6, speed: 0.75, lunge: 2.5, tell: 0.7,
+      phases: [['lunge'], ['lunge', 'flurry']],
+      intro: 'This reef has one rule: I eat first.', rage: 'Bitten? ME? Now you\'re dinner.', defeat: 'Fine... keep your little reef.',
+      spec: { shape: 'torpedo', body: 0x8fa3b4, belly: 0xeef4f8, fin: 0x4f6a7c, stripe: 0x34495a, stripes: [-0.34, -0.22, -0.1, 0.02, 0.14], eye: 0.7, teeth: true } },
     fish: [
       { key: 'minnow', name: 'Minnow', tier: 0, shape: 'oval', body: 0x9fd8ff, belly: 0xf4fbff, fin: 0x7fc0ef, speed: 130, behavior: 'school', group: [4, 7], weight: 3 },
       { key: 'goby', name: 'Goby', tier: 0, shape: 'oval', body: 0xd9b27a, belly: 0xfff0d6, fin: 0xb08850, stripe: 0x8a6a40, stripes: [-0.15, 0.1], speed: 100, behavior: 'skittish', weight: 1.5 },

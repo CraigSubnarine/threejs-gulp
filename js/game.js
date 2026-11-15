@@ -140,6 +140,10 @@ function updateHud() {
   const fill = `${(G.meter / METER_NEED) * 100}%`;
   if (shown.fill !== fill) $('meterFill').style.width = shown.fill = fill;
   if (shown.tier !== P.tier) { shown.tier = P.tier; updateChain(); }
+  if (G.apex) { // the apex's health bar
+    const w = `${G.apex.hp / G.apex.maxHp * 100}%`;
+    if (shown.boss !== w) $('bossFill').style.width = shown.boss = w;
+  }
   // Once-per-level powers you still have, so you know what's left.
   const perks = [P.shields && `SPINES ×${P.shields}`, P.gulps && `GULP ×${P.gulps}`, windLeft() && 'SECOND WIND'].filter(Boolean).join(' · ');
   if (shown.perks !== perks) $('perks').textContent = shown.perks = perks;
@@ -177,6 +181,7 @@ const windLeft = () => G.stats.secondWind - G.windUsed;
 // Build one level: its scenery, its fish, its spawner. You start it at tier 1.
 function startLevel() {
   const info = levelInfo(G.level);
+  removeApex();
   G.scenery?.dispose();
   Object.assign(G, { zone: info.zone, index: info.index, spot: info.spot, water: info.spot.water ?? info.zone.water });
   G.scenery = makeZone(G.zone, G.spot, scene, mulberry32(hashSeed(`${G.zone.key}/${G.index}`)));
@@ -332,7 +337,8 @@ function updateFish(f, dt) {
     f.obj.spikes.scale.setScalar(Math.max(f.puff, 0.001));
   }
   const flees = s.behavior === 'skittish' || s.behavior === 'school' || f.variant === 'speedy';
-  if ((live && flees && canEat(P, f) && d < TUNING.fleeRange * (f.variant === 'speedy' ? 1.5 : 1)) || G.phase === 'widen') {
+  const clearOff = G.phase === 'widen' || G.phase === 'apex' || G.phase === 'apexdown'; // everyone leaves while the camera widens or the apex is here
+  if ((live && flees && canEat(P, f) && d < TUNING.fleeRange * (f.variant === 'speedy' ? 1.5 : 1)) || clearOff) {
     tx = -dx / d * sp * 1.7; // swim away from you
     ty = -dy / d * sp * 1.7;
     rate = 5;
@@ -426,7 +432,7 @@ function eat(f) {
   beep(380 + Math.min(f.tier, 3) * 140 + Math.min(G.combo, COMBO_MAX) * 40, 70, 0.06, 'square', 0.5);
   if (v === 'golden') jingle([1319, 1568, 2093], 60);
   buzz(15);
-  if (G.meter >= METER_NEED) return levelCleared();
+  if (G.meter >= METER_NEED) return G.index === LEVELS_PER_ZONE - 1 ? startApex() : levelCleared(); // a zone's last level ends with its apex
   const t = tierFor(G.meter);
   if (t > P.tier) {
     P.tier = t;
@@ -454,7 +460,7 @@ function die(f) {
 // ---------- Between levels ----------
 // The meter is full: a clear card, then the camera pulls back while you stay the same size (the view widens),
 // then the skill tree, then a fade into the next level, where you're a tier-1 fish among bigger ones.
-function levelCleared() {
+function levelCleared(title = 'LEVEL CLEAR!') {
   const bonus = CLEAR_BONUS * G.level;
   G.score += bonus;
   G.points += 1;
@@ -464,11 +470,173 @@ function levelCleared() {
   P.safe = 99;
   P.boost = 0;
   noteProgress({ level: G.level + 1, score: G.score });
-  banner('LEVEL CLEAR!', `+${bonus.toLocaleString()} · +1 skill point`, CLEAR_T * 1000);
+  banner(title, `+${bonus.toLocaleString()} · +1 skill point`, CLEAR_T * 1000);
   burst(P.x, P.y, 40, 320);
   jingle([523, 659, 784, 1047, 1319], 110);
   buzz(120);
 }
+// ---------- The apex predator at the end of a zone ----------
+// It circles you, shakes (a red "!") and lunges. After a lunge it slows right down: that's your chance to bite its
+// tail. Its jaws (the front of its body) eat you. Its health bar splits into phases, and each phase adds attacks.
+function startApex() {
+  const a = G.zone.apex, len = FISH_LEN[3] * a.size, side = Math.random() < 0.5 ? -1 : 1, hp = apexHp(a, levelInfo(G.level).loop);
+  const obj = makeFish({ key: `apex-${a.key}`, ...a.spec }), warn = makeWarn();
+  warn.scale.setScalar(80);
+  warn.visible = false;
+  scene.add(obj.root, warn);
+  // stage: which fight phase it's in (not "phase": pose() uses that for the tail wag)
+  G.apex = { a, obj, warn, s: { name: a.short }, len, hp, maxHp: hp, stage: 0, phase: 0, mode: 'enter', t: 1.6, left: 0, inv: 0, flash: 0,
+    x: P.x + side * ((view.x1 - view.x0) / 2 + len * 0.6), y: clamp(P.y + 150, -WORLD.y + len * 0.2, WORLD.y - len * 0.2),
+    vx: -side * 400, vy: 0, face: -side, ang: Math.atan2(150, side * 600), spin: Math.random() < 0.5 ? 1 : -1 };
+  G.phase = 'apex';
+  Object.assign(P, { tier: 3, safe: 1.5, boost: 0 });
+  banner(a.name.toUpperCase(), `"${a.intro}"`, 3200);
+  $('bossName').textContent = a.name;
+  $('boss').hidden = false;
+  shown.boss = null;
+  boom(600, 0.14);
+  beep(90, 700, 0.07, 'sawtooth', 0.6);
+  buzz(200);
+}
+function removeApex() {
+  if (!G.apex) return;
+  scene.remove(G.apex.obj.root, G.apex.warn);
+  G.apex = null;
+  $('boss').hidden = true;
+}
+// Its heading, matching how its model is posed: facing left or right, nose tilted up to ±0.6 rad.
+function apexHeading(A) {
+  const p = clamp(Math.atan2(A.vy, Math.abs(A.vx) + 20), -0.6, 0.6);
+  return { hx: A.face * Math.cos(p), hy: Math.sin(p) };
+}
+function nextAttack(A) {
+  const list = A.a.phases[A.stage], kind = list[Math.floor(Math.random() * list.length)];
+  A.mode = 'tell';
+  A.left = kind === 'flurry' ? 3 : 1;
+  A.t = kind === 'flurry' ? 0.45 : A.a.tell / (A.stage > 0 ? 1.2 : 1);
+  beep(500, 300, 0.04, 'square', 1.6);
+}
+function updateApex(dt) {
+  const A = G.apex, a = A.a, rage = A.stage > 0 ? 1.2 : 1, base = PLAYER.speed;
+  A.t -= dt;
+  A.inv -= dt;
+  A.flash = Math.max(0, A.flash - dt * 4);
+  if (A.mode === 'dying') { // rolls belly-up, sinks and shrinks away
+    A.y -= 260 * dt;
+    A.obj.root.position.set(A.x, A.y, 0);
+    A.obj.pitch.rotation.x += dt * 4;
+    A.obj.root.scale.setScalar(A.len * Math.max(0.01, A.t / 1.8));
+    A.warn.visible = false;
+    return;
+  }
+  const dx = P.x - A.x, dy = P.y - A.y, d = Math.hypot(dx, dy) || 1;
+  let tx = A.vx, ty = A.vy, rate = 3;
+  if (A.mode === 'enter' || A.mode === 'circle') { // circles you at a distance
+    A.ang += dt * 0.7 * A.spin * rage;
+    const R = A.len * 1.1, ex = P.x + Math.cos(A.ang) * R - A.x, ey = P.y + Math.sin(A.ang) * R * 0.6 - A.y, e = Math.hypot(ex, ey) || 1;
+    const sp = a.speed * base * rage * Math.min(1.4, e / 250 + 0.4);
+    tx = ex / e * sp;
+    ty = ey / e * sp;
+    if (A.t <= 0) nextAttack(A);
+  } else if (A.mode === 'tell') { // stops, turns to face you and shakes: an attack is coming
+    tx = dx / d * 25;
+    ty = dy / d * 25;
+    rate = 8;
+    if (A.t <= 0) { // lunge at where you are right now
+      const sp = a.lunge * base * rage;
+      A.vx = dx / d * sp;
+      A.vy = dy / d * sp;
+      A.mode = 'lunge';
+      A.t = A.left > 1 ? 0.32 : 0.55;
+      boom(200, 0.06);
+      beep(150, 220, 0.05, 'sawtooth', 0.5);
+    }
+  } else if (A.mode === 'lunge') {
+    rate = 0; // straight on, no steering
+    if (A.t <= 0) {
+      if (--A.left > 0) { A.mode = 'tell'; A.t = 0.35; } else { A.mode = 'recover'; A.t = A.stage > 0 ? 0.85 : 1.15; }
+    }
+  } else if (A.mode === 'recover') { // slows right down: bite its tail now!
+    tx = 0;
+    ty = 0;
+    rate = 2.5;
+    if (A.t <= 0) { A.mode = 'circle'; A.t = (A.stage > 0 ? 1.6 : 2.3) + Math.random() * 0.8; }
+  }
+  if (rate) {
+    A.vx += (tx - A.vx) * Math.min(1, dt * rate);
+    A.vy += (ty - A.vy) * Math.min(1, dt * rate);
+  }
+  A.x += A.vx * dt;
+  A.y += A.vy * dt;
+  const lim = WORLD.y - A.len * 0.12; // stays in the water and near the play area
+  if (Math.abs(A.y) > lim) { A.y = Math.sign(A.y) * lim; A.vy *= -0.3; }
+  if (Math.abs(A.x) > WORLD.x + 300) { A.x = Math.sign(A.x) * (WORLD.x + 300); A.vx *= -0.3; }
+  pose(A, dt);
+  if (A.mode === 'tell') A.obj.root.position.set(A.x + (Math.random() - 0.5) * A.len * 0.03, A.y + (Math.random() - 0.5) * A.len * 0.03, 0); // the shake
+  A.obj.root.scale.setScalar(A.len);
+  A.obj.mats.body.emissive.setRGB(A.flash, 0, 0); // flashes red when bitten
+  A.warn.visible = A.mode === 'tell';
+  const { hx, hy } = apexHeading(A); // the "!" sits over its head, where the bite comes from
+  A.warn.position.set(A.x + hx * A.len * 0.35, A.y + hy * A.len * 0.35 + A.len * 0.14 + 50, 30);
+  if (G.phase === 'apex' && P.alive) apexTouch(A);
+}
+// You bite its tail; its jaws bite you; anything else just pushes you apart.
+function apexTouch(A) {
+  const { hx, hy } = apexHeading(A), r = A.len * 0.11; // about half its body height
+  const bite = apexContact(A.x, A.y, hx, hy, A.len, r, P.x, P.y, P.len * SHAPE_R.oval * G.stats.reach);
+  const me = apexContact(A.x, A.y, hx, hy, A.len, r, P.x, P.y, P.len * SHAPE_R[G.cls.spec.shape]);
+  if (bite === 'tail' && A.inv <= 0) return biteApex(A);
+  if (me === 'head' && P.safe <= 0) {
+    if (!bitten(A)) { A.mode = 'recover'; A.t = 1.2; } // Spines or Second Wind saved you: it backs off
+    return;
+  }
+  if (me) { const nx = P.x - A.x, ny = P.y - A.y, m = Math.hypot(nx, ny) || 1; P.vx += nx / m * 60; P.vy += ny / m * 60; }
+}
+function biteApex(A) {
+  const dmg = P.boost > 0 ? APEX.boostDamage : 1, pts = APEX.bitePoints * dmg * G.level;
+  A.hp = Math.max(0, A.hp - dmg);
+  A.inv = APEX.inv;
+  A.flash = 1;
+  G.score += pts;
+  popup(dmg > 1 ? `BOOST BITE! +${pts}` : `BITE! +${pts}`, A.x, A.y + A.len * 0.15, 'combo');
+  const nx = P.x - A.x, ny = P.y - A.y, m = Math.hypot(nx, ny) || 1;
+  P.vx = nx / m * 500; // you bounce off
+  P.vy = ny / m * 500;
+  P.boost = 0;
+  A.vx -= nx / m * 200;
+  A.vy -= ny / m * 200;
+  burst(P.x, P.y, 16, 200);
+  beep(200, 120, 0.07, 'square', 0.5);
+  boom(150, 0.06);
+  buzz(50);
+  if (A.hp <= 0) return apexDefeated(A);
+  const ph = apexPhase(A.hp, A.maxHp, A.a.phases.length);
+  if (ph > A.stage) { // angry: a new phase with more attacks
+    A.stage = ph;
+    popup(`"${A.a.rage}"`, A.x, A.y + A.len * 0.35, 'taunt');
+    boom(500, 0.12);
+    A.mode = 'circle';
+    A.t = 1.2;
+  } else if (A.mode === 'circle') A.t = Math.min(A.t, 0.8); // it strikes back soon
+}
+function apexDefeated(A) {
+  const bonus = APEX.bonus * G.level;
+  G.score += bonus;
+  G.points += 1; // a bonus point; levelCleared adds the level's own point too
+  A.mode = 'dying';
+  A.t = 1.8;
+  G.phase = 'apexdown';
+  G.phaseT = 1.8;
+  P.safe = 99;
+  popup(`"${A.a.defeat}"`, A.x, A.y + A.len * 0.35, 'taunt');
+  banner(`${A.a.short.toUpperCase()} DEFEATED!`, `+${bonus.toLocaleString()} · +1 bonus skill point`, 1800);
+  burst(A.x, A.y, 60, 400);
+  jingle([523, 659, 784, 1047, 1319, 1568], 100);
+  boom(700, 0.14);
+  buzz(300);
+  $('boss').hidden = true;
+}
+
 // Called by the skill tree's "Next level" button.
 function nextLevel() {
   if (G.phase !== 'tree') return;
@@ -504,10 +672,12 @@ function update(dt) {
   if (play) updatePlayer(dt);
   else Object.assign(cam, { x: Math.sin(G.t * 0.06) * 900, y: -380 + Math.sin(G.t * 0.11) * 120, dist: camDist(VIEW_H[2]), yaw: Math.sin(G.t * 0.09) * CAMERA.sway * DEG });
   for (const f of [...G.fish]) updateFish(f, dt);
+  if (G.apex) updateApex(dt);
   if (play && P.alive && G.phase === 'swim') collide();
   if (play) { // the camera follows you (looking a little ahead), swings with your swimming and pulls back as you grow
-    const k = Math.min(1, dt * 4), widen = G.phase === 'widen' || G.phase === 'fadeout';
-    cam.dist += (camDist(widen ? VIEW_H[1] * LEVEL_SCALE : VIEW_H[P.tier]) - cam.dist) * Math.min(1, dt * (widen ? 2.6 : 2));
+    const k = Math.min(1, dt * 4), widen = G.phase === 'widen' || G.phase === 'fadeout', fight = G.phase === 'apex' || G.phase === 'apexdown';
+    const viewTo = widen ? VIEW_H[1] * LEVEL_SCALE : fight ? VIEW_H[3] * APEX.view : VIEW_H[P.tier];
+    cam.dist += (camDist(viewTo) - cam.dist) * Math.min(1, dt * (widen ? 2.6 : 2));
     const hw = (view.x1 - view.x0) / 2, below = cam.y - view.y0, above = view.y1 - cam.y, lim = widen ? Infinity : 1;
     cam.x += (clampMid(P.x + P.vx * CAMERA.lead, -WORLD.x * lim - 100 + hw, WORLD.x * lim + 100 - hw) - cam.x) * k;
     cam.y += (clampMid(P.y + P.vy * CAMERA.lead, -WORLD.y * lim - 160 + below, WORLD.y * lim + 160 - above) - cam.y) * k;
@@ -525,6 +695,7 @@ function update(dt) {
     else if (G.phase === 'widen') { G.phase = 'tree'; openTree(); }
     else if (G.phase === 'fadeout') swapLevel();
     else if (G.phase === 'fadein') G.phase = 'swim';
+    else if (G.phase === 'apexdown') { removeApex(); levelCleared('ZONE CLEAR!'); }
   }
   $('fade').style.opacity = G.phase === 'fadeout' ? 1 - G.phaseT / FADE_OUT_T : G.phase === 'fadein' ? G.phaseT / FADE_IN_T : 0;
   if (bannerTimer > 0 && (bannerTimer -= dt) <= 0) $('banner').hidden = true;

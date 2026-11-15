@@ -67,6 +67,13 @@
   .pop.combo { color: #ffe066; font-size: 1.5rem; }
   .pop.gold { color: #ffd23b; font-size: 1.7rem; text-shadow: 0 2px 0 #8a5a00, 0 0 12px rgb(255 210 59 / .8); }
   .pop.ouch { color: #ff8ad8; font-size: 1.3rem; }
+  /* The apex's health bar, under your meter during the fight. */
+  #boss { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-family: "Lilita One", sans-serif; font-size: 1rem; color: #ffd0d0; }
+  #boss[hidden] { display: none; }
+  #bossBar { position: relative; flex: 1; max-width: 300px; height: 16px; border-radius: 8px; background: rgb(0 30 50 / .5); border: 2px solid rgb(255 255 255 / .8); overflow: hidden; }
+  #bossFill { position: absolute; inset: 0 auto 0 0; width: 100%; background: linear-gradient(90deg, #ff3b3b, #ff8a5c); transition: width .25s; }
+  /* An apex's taunt, floating up from it like a speech bubble. */
+  .pop.taunt { font-family: Nunito, sans-serif; font-weight: 800; font-size: 1rem; color: var(--text); background: #fff; padding: 6px 12px; border-radius: 14px; text-shadow: none; box-shadow: 0 3px 0 rgb(0 30 50 / .3); white-space: nowrap; animation-duration: 2.8s; }
   #perks { margin-top: 4px; font-size: .75rem; font-weight: 800; letter-spacing: .04em; color: #ffe8a8; min-height: 1em; }
   /* The fade between levels. */
   #fade { position: fixed; inset: 0; z-index: 1; background: #0b3a52; opacity: 0; pointer-events: none; }
@@ -119,6 +126,7 @@
   <div class="top"><span id="score">0</span><span id="combo"></span><span id="where"></span></div>
   <div id="chain"></div>
   <div id="meterRow"><div id="meter"><i id="meterFill"></i><s style="left:33.3%"></s><s style="left:66.6%"></s></div></div>
+  <div id="boss" hidden><span id="bossName"></span><div id="bossBar"><i id="bossFill"></i></div></div>
   <div id="perks"></div>
 </div>
 <div id="fade"></div>
@@ -143,7 +151,8 @@
     <label class="row">Sound <input type="checkbox" id="sound"></label>
     <label class="row">Vibration <input type="checkbox" id="vibrate"></label>
     <p class="hint"><b>Phone:</b> touch anywhere and drag, like a joystick. The further you drag, the faster you swim. Tap <b>BOOST</b> (bottom right) for a burst of speed; it takes a few seconds to recharge. <b>Computer:</b> your fish follows the mouse, or use the arrow keys or WASD. Click or press Space to boost.</p>
-    <p class="hint">The bar at the top shows what you can eat (green) and what can eat you (red). Eat to fill your meter: you grow at each mark, and a full meter clears the reef. One bite from a bigger fish and the run is over.</p>
+    <p class="hint">The bar at the top shows what you can eat (green) and what can eat you (red). Eat to fill your meter: you grow at each mark, and a full meter clears the level. One bite from a bigger fish and the run is over.</p>
+    <p class="hint">At the end of a zone its <b>apex predator</b> shows up. Bite its <b>tail</b> (boost into it for a double bite) and stay away from its <b>jaws</b>. When it shakes and a red "!" appears, it's about to lunge; right after a lunge it slows down, so that's your chance.</p>
     <button data-action="back">Back</button>
   </section>
 

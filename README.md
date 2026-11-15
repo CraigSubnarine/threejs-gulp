@@ -12,7 +12,7 @@ No build step and no asset files: three.js loads from a CDN through an import ma
   - **Computer:** the fish follows the mouse, or use the arrow keys or WASD. Click or press Space to boost.
   - **Boost:** about half a second at 2.3× speed, the way you're steering. The button's ring then refills like a clock over 4 s, and it glows when it's ready (`BOOST` in `data.js`).
   - **Pause:** the top-right button, or Esc / P.
-- **Status:** Step 2 is live: the Sunny Reef's 5 levels, keeping your size between levels, more fish and rare variants, the skill tree and unlockable classes. Next are the apex bosses. The full plan is in `GameDev/gulp-plan.md`.
+- **Status:** Step 3 is live: the Sunny Reef's 5 levels end with its apex predator, the Barracuda. Step 2 brought keeping your size between levels, more fish and rare variants, the skill tree and unlockable classes. Next is the Kelp Forest. The full plan is in `GameDev/gulp-plan.md`.
 
 ## How it plays
 
@@ -30,7 +30,14 @@ No build step and no asset files: three.js loads from a CDN through an import ma
   4. Arch Rocks
   5. The Drop-off
 
-  After level 5 the reef starts over, with faster fish; the apex boss comes in Step 3.
+  After level 5 comes the apex, then the reef starts over with faster fish, until the Kelp Forest is built.
+- **The apex predator (the Barracuda):** filling level 5's meter brings it in with a taunt and a health bar, while the other fish clear off.
+  - **Its tail is where you bite it.** Each bite takes 1 health, and boosting into it takes 2.
+  - **Its jaws** (the front 40% of its body) eat you, unless Spines or Second Wind saves you.
+  - **How it fights:** it circles you, then shakes with a red "!" and lunges at more than twice your speed. Right after a lunge it slows down: that's your chance.
+  - **Phase 2:** at half health it gets angry (a new taunt), moves faster and adds a flurry of three quick lunges.
+  - **Beating it** pays 3,000 × the level, plus a bonus skill point.
+  - It's data plus an attack library (`apex` in `data.js`, `APEX_ATTACKS`): each later zone's apex is a model, some numbers and a list of attacks per phase.
 - **The reef's fish:**
   - **Food:** minnows (schools that dart away) and gobies.
   - **Your size at first:** butterflyfish and damselfish.

@@ -9,6 +9,7 @@ const { serve } = require('./server');
 let url; // the game, served over http like GitHub Pages does (set when the server starts)
 const out = path.resolve(__dirname, '..', 'playtest-output');
 fs.mkdirSync(out, { recursive: true });
+const APEX_BONUS_L5 = 3000 * 5; // APEX.bonus × level 5, the least that beating the reef's apex should pay
 const failures = [];
 const check = (name, ok, detail = '') => {
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${detail ? `  (${detail})` : ''}`);
@@ -307,10 +308,72 @@ async function run(browser, name, options) {
     await page.evaluate(() => __step(30));
     await shot(`08-level${lv}`);
   }
-  await page.evaluate(() => __clearLevel());
+  // ---------- The apex: the Barracuda at the end of reef level 5 ----------
+  const arrive = await page.evaluate(() => {
+    for (let i = 0; i < 120 && game.G.phase !== 'swim'; i++) game.update(1 / 60);
+    __P().safe = 1e6;
+    game.G.meter = METER_NEED - 1;
+    __put('minnow', 5, 0);
+    __step(1);
+    __P().safe = 1e6; // the apex's arrival gives you 1.5 s; the test player stays safe while it fights
+    const A = game.G.apex;
+    return { phase: game.G.phase, bar: !document.getElementById('boss').hidden, name: document.getElementById('bossName').textContent, hp: A?.hp, title: document.getElementById('bannerTitle').textContent, taunt: document.getElementById('bannerSub').textContent };
+  });
+  check(`${name}: filling level 5's meter brings in the Barracuda with a taunt and a health bar`, arrive.phase === 'apex' && arrive.bar && arrive.name === 'The Barracuda' && arrive.hp === 6 && arrive.title === 'THE BARRACUDA' && arrive.taunt.length > 10, JSON.stringify(arrive));
+  await page.evaluate(() => __step(90));
+  await shot('10-apex');
+  // Let it fight for a while (you can't be eaten here): it circles, shakes with a "!", lunges fast, then slows down.
+  const cycle = await page.evaluate(() => {
+    const A = game.G.apex, seen = new Set();
+    let fast = 0, warned = false, shot = false;
+    for (let i = 0; i < 60 * 12; i++) {
+      game.update(1 / 60);
+      seen.add(A.mode);
+      if (A.mode === 'tell') warned ||= A.warn.visible;
+      if (A.mode === 'lunge') fast = Math.max(fast, Math.hypot(A.vx, A.vy));
+      if (A.mode === 'tell' && !shot && A.t < 0.3) { shot = true; break; } // stop mid-shake for the screenshot
+    }
+    game.render();
+    return { seen: [...seen], fast: fast / PLAYER.speed, warned, mode: A.mode };
+  });
+  check(`${name}: the Barracuda circles, then shakes with a red "!" before it attacks`, (cycle.seen.includes('circle') || cycle.seen.includes('enter')) && cycle.seen.includes('tell') && cycle.warned, JSON.stringify(cycle));
+  await shot('11-apex-tell');
+  const lunge = await page.evaluate(() => {
+    const A = game.G.apex, seen = new Set();
+    let fast = 0;
+    for (let i = 0; i < 60 * 12 && !(seen.has('lunge') && seen.has('recover')); i++) { game.update(1 / 60); seen.add(A.mode); if (A.mode === 'lunge') fast = Math.max(fast, Math.hypot(A.vx, A.vy)); }
+    return { seen: [...seen], fast: +(fast / PLAYER.speed).toFixed(2) };
+  });
+  check(`${name}: it lunges at more than twice your speed, then slows down`, lunge.seen.includes('lunge') && lunge.seen.includes('recover') && lunge.fast > 2, JSON.stringify(lunge));
+  // Put the Barracuda still at the middle, facing right: its tail end is on the left, its jaws on the right.
+  const hold = () => page.evaluate(() => { const A = game.G.apex; Object.assign(A, { mode: 'recover', t: 9, x: 0, y: 0, vx: 0, vy: 0, face: 1, inv: 0 }); Object.assign(__P(), { vx: 0, vy: 0, boost: 0 }); });
+  await hold();
+  const bite1 = await page.evaluate(() => { const A = game.G.apex, P = __P(); P.x = -A.len / 2 - 10; P.y = 0; game.update(1 / 60); return A.hp; });
+  check(`${name}: biting its tail takes off 1`, bite1 === 5, String(bite1));
+  await hold();
+  const bite2 = await page.evaluate(() => { const A = game.G.apex, P = __P(); P.x = -A.len / 2 - 10; P.y = 0; P.boost = 0.3; game.update(1 / 60); return { hp: A.hp, phase: A.stage, taunt: !!document.querySelector('.pop.taunt') }; });
+  check(`${name}: a boosting bite takes off 2, and at half health it gets angry (phase 2, with a taunt)`, bite2.hp === 3 && bite2.phase === 1 && bite2.taunt, JSON.stringify(bite2));
+  await hold();
+  const jaws = await page.evaluate(() => { const A = game.G.apex, P = __P(); Object.assign(P, { x: A.len / 2 - 30, y: 0, safe: 0, shields: 1 }); game.update(1 / 60); const r = { alive: P.alive, shields: P.shields, hp: A.hp }; P.safe = 1e6; return r; });
+  check(`${name}: its jaws would eat you (Spines spits you out)`, jaws.alive && jaws.shields === 0 && jaws.hp === 3, JSON.stringify(jaws));
+  check(`${name}: phase 2 adds the flurry`, await page.evaluate(() => game.G.apex.a.phases[game.G.apex.stage].includes('flurry')));
+  const pts0 = await page.evaluate(() => game.G.points);
+  await hold();
+  const down = await page.evaluate(() => {
+    const A = game.G.apex, P = __P(), s0 = game.G.score;
+    A.hp = 1;
+    P.x = -A.len / 2 - 10; P.y = 0;
+    game.update(1 / 60);
+    const r = { phase: game.G.phase, title: document.getElementById('bannerTitle').textContent, bonus: game.G.score - s0, bar: document.getElementById('boss').hidden };
+    for (let i = 0; i < 600 && app.state === 'playing'; i++) game.update(1 / 60);
+    game.render();
+    return { ...r, state: app.state, apexGone: !game.G.apex };
+  });
+  check(`${name}: the last bite defeats it: a big bonus, then the tree`, down.phase === 'apexdown' && down.title === 'BARRACUDA DEFEATED!' && down.bonus >= APEX_BONUS_L5 && down.bar && down.state === 'tree' && down.apexGone, JSON.stringify(down));
+  check(`${name}: beating the apex gives 2 skill points (bonus + level)`, (await page.evaluate(() => game.G.points)) === pts0 + 2);
   await tap('#treeNext');
-  const loop = await page.evaluate(() => { for (let i = 0; i < 60 && game.G.phase !== 'fadein'; i++) __step(1); return { level: game.G.level, index: game.G.index, spot: game.G.spot.name, faster: speedAt(game.G.level) > speedAt(1) }; });
-  check(`${name}: after reef level 5 comes the next round, deeper and faster`, loop.level === 6 && loop.index === 0 && loop.faster, JSON.stringify(loop));
+  const loop = await page.evaluate(() => { for (let i = 0; i < 60 && game.G.phase !== 'fadein'; i++) __step(1); return { level: game.G.level, index: game.G.index, spot: game.G.spot.name, faster: speedAt(game.G.level) > speedAt(1), apex: !!game.G.apex }; });
+  check(`${name}: after the Barracuda the reef starts over, deeper and faster`, loop.level === 6 && loop.index === 0 && loop.faster && !loop.apex, JSON.stringify(loop));
 
   // ---------- Skills at work: Spines spits out a bite ----------
   const spines = await page.evaluate(() => {

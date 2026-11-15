@@ -10,6 +10,7 @@ const SHAPES = {
   fat: { h: 0.5, w: 0.36, head: 0.25 },
   long: { h: 0.16, w: 0.13 },
   round: { h: 0.72, w: 0.66 },
+  torpedo: { h: 0.24, w: 0.19 }, // apexes like the Barracuda: long but with some bulk
 };
 // ---------- Caustics: the rippling sunlight patterns that play over everything underwater ----------
 // Added to three.js's standard material with onBeforeCompile: the fragment shader gets a cheap animated pattern from
@@ -81,6 +82,20 @@ function spikeGeometry(sh) {
   return mergeGeometries(list);
 }
 
+// Teeth for predators: two rows of small white cones along the jaw line near the nose, on both sides.
+function teethGeometry(sh) {
+  const list = [];
+  for (let i = 0; i < 6; i++) {
+    const x = 0.27 + i * 0.036, k = Math.sqrt(Math.max(0.05, 1 - (x / 0.5) ** 2)); // the body narrows towards the nose
+    for (const side of [1, -1]) {
+      list.push(new THREE.ConeGeometry(0.012, 0.05, 4).rotateX(Math.PI).translate(x, -sh.h * 0.04 * k, side * sh.w / 2 * k * 0.92)); // top row, pointing down
+      list.push(new THREE.ConeGeometry(0.01, 0.04, 4).translate(x + 0.018, -sh.h * 0.22 * k, side * sh.w / 2 * k * 0.9));             // bottom row, pointing up
+    }
+  }
+  return mergeGeometries(list);
+}
+const teethMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3, flatShading: true });
+
 // Geometry is built once per species and shared by every fish of it; materials once per species + variant.
 const cache = new Map(), matCache = new Map();
 function partsFor(spec) {
@@ -96,6 +111,7 @@ function partsFor(spec) {
     eye: new THREE.SphereGeometry(0.075 * eye, 10, 8),
     pupil: new THREE.SphereGeometry(0.042 * eye, 8, 6),
     spikes: null, // built when a puffer or a spiny fish needs them
+    teeth: spec.teeth ? teethGeometry(sh) : null,
   };
   cache.set(spec.key, p);
   return p;
@@ -154,7 +170,8 @@ export function makeFish(spec, variant = null) {
     spikes.scale.setScalar(variant === 'spiny' ? 0.85 : 0.001);
     pitch.add(spikes);
   }
-  return { root, yaw, pitch, tail, spikes };
+  if (p.teeth) pitch.add(new THREE.Mesh(p.teeth, teethMat));
+  return { root, yaw, pitch, tail, spikes, mats }; // mats: an apex flashes its own body red when bitten
 }
 
 // Small pictures of each fish for the food chain bar, rendered once with a throwaway renderer.
