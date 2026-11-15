@@ -3,6 +3,9 @@
 // The world is a flat plane at z = 0 (side view): x runs left-right, y up (surface) and down (sea floor).
 const WORLD = { x: 2200, y: 1400 };   // half-width and half-height
 const VIEW_H = [0, 1280, 1650, 2100]; // how much of the plane the camera shows (height) at your tier 1, 2, 3
+// tilt: degrees the camera looks down on the sea; sway: degrees it swings round as you swim sideways;
+// lead: seconds of your movement it looks ahead.
+const CAMERA = { tilt: 22, sway: 8, lead: 0.25 };
 const FISH_LEN = [40, 70, 120, 200];  // body length per tier; you share the length of the tier you're at
 const GROW = [1, 3, 6];               // meter gained for eating a fish of tier 0 / 1 / 2
 const METER_NEED = 60;                // a full meter clears the zone; you grow a tier at 1/3 and 2/3

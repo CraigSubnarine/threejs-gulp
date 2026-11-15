@@ -1,13 +1,13 @@
 // Gulp! game: the 3D scene, the camera, the player, the fish and the HUD. Loaded last, as a module. The rules
 // (who eats whom, growth, score, spawns) live in rules.js; this file moves things and draws them.
 import * as THREE from 'three';
-import { makeFish, makeIcons, makeZone, waterAt, makeWarn, bubbleTexture } from './art.js';
+import { makeFish, makeIcons, makeZone, waterAt, makeWarn, bubbleTexture, water } from './art.js';
 
-const FOV = 45, TAN = Math.tan(FOV / 2 * Math.PI / 180);
+const FOV = 45, DEG = Math.PI / 180, TAN = Math.tan(FOV / 2 * DEG);
 const MAX_ASPECT = 1.25; // wider screens get side bars, so a desktop doesn't see far more of the sea than a phone
-const camDist = viewH => viewH / 2 / TAN; // how far back the camera sits to show that much of the plane
+const camDist = viewH => viewH / 2 / TAN; // how far the camera sits from what it looks at to show that much of the plane
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
-const within = (v, lim) => (lim <= 0 ? 0 : clamp(v, -lim, lim));
+const clampMid = (v, a, b) => (a > b ? (a + b) / 2 : clamp(v, a, b)); // if the range is inside out, sit in the middle
 const $ = id => document.getElementById(id);
 
 // ---------- Renderer, scene, camera, lights ----------
@@ -18,7 +18,31 @@ document.body.prepend(renderer.domElement);
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0x4cbfdc, 1000, 5000);
 const camera = new THREE.PerspectiveCamera(FOV, 1, 50, 14000);
-camera.position.set(0, 0, camDist(VIEW_H[2]));
+// The camera looks at a point on the play plane from above and in front (CAMERA.tilt), swung round a little
+// (yaw) as you swim. dist sets how much of the plane it shows.
+const cam = { x: 0, y: 0, dist: camDist(VIEW_H[2]), yaw: 0 };
+function placeCamera() {
+  const pitch = CAMERA.tilt * DEG, flat = Math.cos(pitch) * cam.dist;
+  camera.position.set(cam.x + Math.sin(cam.yaw) * flat, cam.y + Math.sin(pitch) * cam.dist, Math.cos(cam.yaw) * flat);
+  camera.lookAt(cam.x, cam.y, 0);
+  camera.updateMatrixWorld();
+  view = viewRect();
+}
+// The part of the play plane on screen: where the four screen corners' rays hit z = 0. With a tilted camera it's a
+// trapezoid; this is its bounding box.
+const CORNERS = [[-1, -1], [1, -1], [-1, 1], [1, 1]];
+let view = { x0: -600, x1: 600, y0: -700, y1: 700 };
+function viewRect() {
+  const r = { x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity };
+  for (const [cx, cy] of CORNERS) {
+    ndc.set(cx, cy);
+    ray.setFromCamera(ndc, camera);
+    if (!ray.ray.intersectPlane(plane, hit)) continue;
+    r.x0 = Math.min(r.x0, hit.x); r.x1 = Math.max(r.x1, hit.x);
+    r.y0 = Math.min(r.y0, hit.y); r.y1 = Math.max(r.y1, hit.y);
+  }
+  return r;
+}
 const hemi = new THREE.HemisphereLight(0xffffff, 0x336688, 1.6);
 const sun = new THREE.DirectionalLight(0xffffff, 1.8);
 sun.position.set(0.4, 1, 0.7);
@@ -156,17 +180,16 @@ function spawnFish(species, x, y, dir) {
   G.fish.push(f);
   return f;
 }
-const half = () => { const hh = camera.position.z * TAN; return { hh, hw: hh * camera.aspect }; };
 // A new fish (or a school) arrives from just past the left or right edge of the view.
 function spawn(inside = false) {
-  const { hh, hw } = half(), sp = G.spawner.next(G.mode === 'play' ? P.tier : 2), dir = sp.fromLeft ? 1 : -1;
+  const sp = G.spawner.next(G.mode === 'play' ? P.tier : 2), dir = sp.fromLeft ? 1 : -1;
   const len = FISH_LEN[sp.species.tier];
-  let x0 = camera.position.x - dir * (hw + 80 + len);
+  let x0 = dir > 0 ? view.x0 - 80 - len : view.x1 + 80 + len;
   if (inside) { // filling the sea at the start of a zone: anywhere in view, but not on top of you
-    x0 = camera.position.x + (G.spawner.rand() * 2 - 1) * hw;
+    x0 = view.x0 + G.spawner.rand() * (view.x1 - view.x0);
     if (G.mode === 'play' && Math.abs(x0 - P.x) < 320) x0 = P.x + Math.sign(x0 - P.x || 1) * 320;
   }
-  const y0 = clamp(camera.position.y + sp.y * hh * 0.85, -WORLD.y + 80, WORLD.y - 80);
+  const y0 = clamp((view.y0 + view.y1) / 2 + sp.y * (view.y1 - view.y0) / 2 * 0.85, -WORLD.y + 80, WORLD.y - 80);
   for (let i = 0; i < sp.count; i++) spawnFish(sp.species, x0 - dir * Math.random() * 160, clamp(y0 + (Math.random() - 0.5) * 140, -WORLD.y + 40, WORLD.y - 40), dir);
 }
 function startZone() {
@@ -178,8 +201,9 @@ function startZone() {
   G.spawnT = 0;
   if (G.mode === 'play') {
     Object.assign(P, { x: 0, y: 0, vx: 0, vy: 0, tier: 1, safe: PLAYER.safe });
-    camera.position.set(0, 0, camera.position.z);
+    Object.assign(cam, { x: 0, y: 0, yaw: 0 });
   }
+  placeCamera();
   for (let i = 0; i < 8; i++) spawn(true);
 }
 
@@ -201,16 +225,22 @@ function stick() {
   return { x: 0, y: 0 };
 }
 
-// Turn a fish's model to match how it's moving: face left or right, nose up or down, tail wagging.
+// Turn a fish's model to match how it's moving: face left or right (banking into the turn), nose up or down,
+// and swim: the tail wags and the body swings the other way, harder the faster it goes.
 function pose(e, dt) {
   const o = e.obj;
   if (Math.abs(e.vx) > 12) e.face = Math.sign(e.vx);
   o.root.position.set(e.x, e.y, 0);
-  o.yaw.rotation.y += (yawFor(e.face) - o.yaw.rotation.y) * Math.min(1, dt * 6);
+  const turn = yawFor(e.face) - o.yaw.rotation.y;
+  o.yaw.rotation.y += turn * Math.min(1, dt * 6);
   const pitch = clamp(Math.atan2(e.vy, Math.abs(e.vx) + 20), -0.6, 0.6);
   o.pitch.rotation.z += (pitch - o.pitch.rotation.z) * Math.min(1, dt * 5);
-  e.phase += dt * (5 + Math.hypot(e.vx, e.vy) / 35);
-  o.tail.rotation.y = Math.sin(e.phase) * 0.5;
+  o.pitch.rotation.x += (clamp(turn * 0.45, -0.7, 0.7) - o.pitch.rotation.x) * Math.min(1, dt * 8);
+  const speed = Math.hypot(e.vx, e.vy);
+  e.phase += dt * (5 + speed / 35);
+  const swing = 0.6 + Math.min(1, speed / 300) * 0.4;
+  o.tail.rotation.y = Math.sin(e.phase) * 0.55 * swing;
+  o.pitch.rotation.y = -Math.sin(e.phase - 0.6) * 0.13 * swing;
 }
 
 function updatePlayer(dt) {
@@ -351,19 +381,20 @@ function update(dt) {
   G.t += dt;
   const play = G.mode === 'play';
   if (play) updatePlayer(dt);
-  else camera.position.set(Math.sin(G.t * 0.06) * 900, -380 + Math.sin(G.t * 0.11) * 120, camDist(VIEW_H[2]));
+  else Object.assign(cam, { x: Math.sin(G.t * 0.06) * 900, y: -380 + Math.sin(G.t * 0.11) * 120, dist: camDist(VIEW_H[2]), yaw: Math.sin(G.t * 0.09) * CAMERA.sway * DEG });
   for (const f of [...G.fish]) updateFish(f, dt);
   if (play && P.alive && G.phase === 'swim') collide();
-  if (play) { // the camera follows you and pulls back as you grow
-    const tz = camDist(VIEW_H[P.tier]);
-    camera.position.z += (tz - camera.position.z) * Math.min(1, dt * 2);
-    const { hh, hw } = half();
-    camera.position.x += (within(P.x, WORLD.x + 100 - hw) - camera.position.x) * Math.min(1, dt * 4);
-    camera.position.y += (within(P.y, WORLD.y + 160 - hh) - camera.position.y) * Math.min(1, dt * 4);
+  if (play) { // the camera follows you (looking a little ahead), swings with your swimming and pulls back as you grow
+    const k = Math.min(1, dt * 4);
+    cam.dist += (camDist(VIEW_H[P.tier]) - cam.dist) * Math.min(1, dt * 2);
+    const hw = (view.x1 - view.x0) / 2, below = cam.y - view.y0, above = view.y1 - cam.y;
+    cam.x += (clampMid(P.x + P.vx * CAMERA.lead, -WORLD.x - 100 + hw, WORLD.x + 100 - hw) - cam.x) * k;
+    cam.y += (clampMid(P.y + P.vy * CAMERA.lead, -WORLD.y - 160 + below, WORLD.y + 160 - above) - cam.y) * k;
+    cam.yaw += (-P.vx / PLAYER.speed * CAMERA.sway * DEG - cam.yaw) * Math.min(1, dt * 1.5);
   }
+  placeCamera();
   // Fish leave when they're far off screen; new ones arrive while the sea is below its population.
-  const { hh, hw } = half();
-  for (const f of [...G.fish]) if (Math.abs(f.x - camera.position.x) > hw + 900 || Math.abs(f.y - camera.position.y) > hh + 900) removeFish(f);
+  for (const f of [...G.fish]) if (f.x < view.x0 - 900 || f.x > view.x1 + 900 || f.y < view.y0 - 900 || f.y > view.y1 + 900) removeFish(f);
   G.spawnT -= dt;
   if (G.spawnT <= 0 && G.fish.length < TUNING.population && G.phase !== 'cleared') { spawn(); G.spawnT = TUNING.spawnEvery; }
   G.comboT -= dt;
@@ -377,9 +408,10 @@ function update(dt) {
   }
   if (bannerTimer > 0 && (bannerTimer -= dt) <= 0) $('banner').hidden = true;
   // Water colour and fog follow the camera: lighter near the surface, darker near the floor.
-  waterAt(G.zone, camera.position.y, scene.fog.color);
-  scene.fog.near = camera.position.z - 300;
-  scene.fog.far = camera.position.z + 3200;
+  waterAt(G.zone, cam.y, scene.fog.color);
+  scene.fog.near = cam.dist * 1.15; // the bottom of a tilted view is further away than the middle
+  scene.fog.far = cam.dist + 3600;
+  water.uTime.value = G.t;
   G.scenery.update(dt, camera);
   updateFx(dt);
   if (play) updateHud();
@@ -396,7 +428,7 @@ function startRun(seed = Math.floor(Math.random() * 1e9)) {
   G.comboT = 0;
   Object.assign(P, { alive: true, gulp: 0, len: FISH_LEN[1], pulse: 0, face: 1 });
   P.obj.root.visible = true;
-  camera.position.z = camDist(VIEW_H[1]);
+  cam.dist = camDist(VIEW_H[1]);
   shown = {};
   startZone();
   updateHud();
@@ -413,7 +445,7 @@ function toMenu() {
   startZone();
 }
 
-const clock = new THREE.Clock();
+let last = 0;
 window.game = {
   manual: false, // the playtest sets this and steps the game itself
   startRun, toMenu, update, render, spawnFish, G, camera,
@@ -422,8 +454,9 @@ window.game = {
 addEventListener('resize', resize);
 resize();
 toMenu();
-renderer.setAnimationLoop(() => {
-  const dt = Math.min(clock.getDelta(), 0.05);
+renderer.setAnimationLoop(now => {
+  const dt = Math.min((now - last) / 1000, 0.05);
+  last = now;
   if (game.manual || !['menu', 'playing', 'over'].includes(app.state)) return; // paused: the last frame stays up
   update(dt);
   render();

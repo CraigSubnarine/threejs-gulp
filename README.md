@@ -62,3 +62,9 @@ No build step and no asset files: three.js loads from a CDN through an import ma
 - **Low-poly fish from shapes:** a sphere stretched along x for the body (coloured belly to back with vertex colours), a flat extruded tail on a pivot that wags, fins, and sphere eyes. Build each species' geometry once and share it between every fish.
 - **Side view in 3D:** everything plays on the z = 0 plane. Scenery sits behind it (z < 0), so the perspective camera gives parallax for free, and fog hides the far edge. Turning the fish slightly towards the camera shows off the 3D.
 - **Growing = pulling the camera back:** the camera's distance sets how much of the plane you see (`viewHeight / 2 / tan(fov / 2)`).
+- **Making a side view look 3D** (all cheap enough for phones):
+  - **The camera tilts** down 22° and swings a few degrees as you swim, so you see the fish's backs, the floor recedes and the parallax always shows. The area on screen is then a trapezoid: four corner rays against z = 0 give the box used for spawning and despawning.
+  - **The fish swim:** the body swings against the tail, and they bank into turns.
+  - **Caustics:** a few lines of shader added to the standard material (`onBeforeCompile`).
+  - **Depth layers:** rock spires in the middle distance and marine snow between you and the camera.
+  - Tuning lives in `CAMERA` in `data.js`.

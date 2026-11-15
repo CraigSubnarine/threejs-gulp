@@ -11,6 +11,37 @@ const SHAPES = {
   long: { h: 0.16, w: 0.13 },
   round: { h: 0.72, w: 0.66 },
 };
+// ---------- Caustics: the rippling sunlight patterns that play over everything underwater ----------
+// Added to three.js's standard material with onBeforeCompile: the fragment shader gets a cheap animated pattern from
+// the world position, added on top of the lit colour (before fog, so far things fade). uCaustic dims it per zone.
+export const water = { uTime: { value: 0 }, uCaustic: { value: 1 } };
+const CAUSTIC_GLSL = `
+uniform float uTime;
+uniform float uCaustic;
+varying vec3 vWPos;
+float caustic(vec3 w) {
+  vec2 p = vec2(w.x, w.z + w.y * 0.6) * 0.004, q = p;
+  float t = uTime * 0.5, c = 0.0;
+  for (int i = 0; i < 3; i++) {
+    float fi = float(i);
+    q = p + 0.6 * vec2(sin(q.y * 1.7 + t + fi), cos(q.x * 1.3 - t * 0.8 + fi * 1.7));
+    c += 1.0 / (1.0 + 10.0 * abs(sin((q.x + q.y) * 3.1416)));
+  }
+  return pow(c / 3.0, 1.5) * clamp((w.y + ${WORLD.y.toFixed(1)}) / ${(2 * WORLD.y).toFixed(1)} + 0.25, 0.25, 1.0);
+}
+`;
+function caustics(mat, strength) {
+  mat.onBeforeCompile = sh => {
+    sh.uniforms.uTime = water.uTime;
+    sh.uniforms.uCaustic = water.uCaustic;
+    sh.vertexShader = `varying vec3 vWPos;\n${sh.vertexShader}`.replace('#include <fog_vertex>', '#include <fog_vertex>\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    sh.fragmentShader = CAUSTIC_GLSL + sh.fragmentShader.replace('#include <fog_fragment>',
+      `gl_FragColor.rgb += vec3(0.8, 0.97, 1.0) * caustic(vWPos) * ${strength.toFixed(2)} * uCaustic;\n#include <fog_fragment>`);
+  };
+  mat.customProgramCacheKey = () => `caustic${strength}`;
+  return mat;
+}
+
 const smooth = (a, b, t) => { const x = Math.min(1, Math.max(0, (t - a) / (b - a))); return x * x * (3 - 2 * x); };
 const flatFin = (pts, depth = 0.025) => {
   const s = new THREE.Shape(pts.map(([x, y]) => new THREE.Vector2(x, y)));
@@ -64,8 +95,8 @@ function partsFor(spec) {
     side: flatFin([[0, 0], [-0.16, 0.05], [-0.13, -0.05]]),
     eye: new THREE.SphereGeometry(0.075 * eye, 10, 8),
     pupil: new THREE.SphereGeometry(0.042 * eye, 8, 6),
-    bodyMat: new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.55, metalness: 0.05 }),
-    finMat: new THREE.MeshStandardMaterial({ color: spec.fin, flatShading: true, roughness: 0.6, side: THREE.DoubleSide }),
+    bodyMat: caustics(new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.55, metalness: 0.05 }), 0.3),
+    finMat: caustics(new THREE.MeshStandardMaterial({ color: spec.fin, flatShading: true, roughness: 0.6, side: THREE.DoubleSide }), 0.3),
     spikes: spec.behavior === 'puff' ? spikeGeometry(sh) : null,
   };
   cache.set(spec.key, p);
@@ -176,7 +207,7 @@ export function makeZone(zone, scene, rand) {
   const fp = fl.attributes.position;
   for (let i = 0; i < fp.count; i++) fp.setY(i, floorAt(fp.getX(i), fp.getZ(i) - 2000, base) - base);
   fl.computeVertexNormals();
-  const floor = new THREE.Mesh(fl, new THREE.MeshStandardMaterial({ color: zone.floor, flatShading: true, roughness: 0.95 }));
+  const floor = new THREE.Mesh(fl, caustics(new THREE.MeshStandardMaterial({ color: zone.floor, flatShading: true, roughness: 0.95 }), 0.55));
   floor.position.set(0, base, -2000);
   group.add(floor);
 
@@ -217,7 +248,17 @@ export function makeZone(zone, scene, rand) {
       }
     }
   }
-  const props = new THREE.Mesh(mergeGeometries(geos), new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.8, side: THREE.DoubleSide }));
+  // Rock spires rising from the floor behind the play area: mid-distance shapes that slide past as you swim.
+  for (let i = 0; i < 14; i++) {
+    const x = -4200 + i * 620 + R(-200, 200), z = R(-3100, -1700);
+    let y = floorAt(x, z, base), r = R(110, 180);
+    for (let k = 0, n = 3 + Math.floor(rand() * 4); k < n; k++, r *= R(0.72, 0.88)) {
+      geos.push(colored(new THREE.DodecahedronGeometry(1, 0), k % 2 ? 0x7d93a0 : 0x6a8290, M(x + R(-40, 40), y + r * 0.7, z + R(-30, 30), R(0, 3), R(0, 3), R(0, 3), r, r * 1.2, r)));
+      y += r * 1.5;
+    }
+    if (rand() < 0.6) geos.push(colored(new THREE.IcosahedronGeometry(1, 1), CORAL[Math.floor(rand() * CORAL.length)], M(x, y + 10, z, 0, 0, 0, r * 0.9, r * 0.5, r * 0.9)));
+  }
+  const props = new THREE.Mesh(mergeGeometries(geos), caustics(new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.8, side: THREE.DoubleSide }), 0.4));
   group.add(props);
 
   // Light rays from the surface: faint additive cones that sway.
@@ -238,11 +279,27 @@ export function makeZone(zone, scene, rand) {
   const bubbles = new THREE.Points(bgeo, new THREE.PointsMaterial({ map: bubbleTexture(), size: 14, transparent: true, opacity: 0.6, depthWrite: false }));
   group.add(bubbles);
 
+  // Marine snow: soft specks drifting down between the play area and the camera, so the water itself has depth.
+  const S = 170, sp = new Float32Array(S * 3);
+  for (let i = 0; i < S; i++) { sp[i * 3] = R(-1600, 1600); sp[i * 3 + 1] = R(-1600, 1600); sp[i * 3 + 2] = R(150, 900); }
+  const sgeo = new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(sp, 3));
+  group.add(new THREE.Points(sgeo, new THREE.PointsMaterial({ map: dotTexture(), size: 11, color: 0xeef8ff, transparent: true, opacity: 0.55, depthWrite: false })));
+
   let t = 0;
   return {
     group,
     update(dt, cam) {
       t += dt;
+      for (let i = 0; i < S; i++) {
+        const j = i * 3;
+        sp[j + 1] -= (10 + (i % 7) * 3) * dt;
+        sp[j] += Math.sin(t * 0.4 + i) * 6 * dt;
+        if (sp[j + 1] < cam.position.y - 1600) sp[j + 1] += 3200;
+        if (sp[j + 1] > cam.position.y + 1600) sp[j + 1] -= 3200;
+        if (sp[j] > cam.position.x + 1600) sp[j] -= 3200;
+        if (sp[j] < cam.position.x - 1600) sp[j] += 3200;
+      }
+      sgeo.attributes.position.needsUpdate = true;
       for (const r of rays) r.rotation.z = Math.sin(t * 0.25 + r.userData.phase) * 0.12;
       for (let i = 0; i < N; i++) {
         const j = i * 3;
@@ -276,6 +333,22 @@ export function bubbleTexture() {
   bubbleTex = new THREE.CanvasTexture(cv);
   bubbleTex.colorSpace = THREE.SRGBColorSpace; // canvas colours are sRGB, or they come out washed out
   return bubbleTex;
+}
+
+let dotTex;
+function dotTexture() {
+  if (dotTex) return dotTex;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 32;
+  const g = cv.getContext('2d'), grad = g.createRadialGradient(16, 16, 0, 16, 16, 16);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.4, 'rgba(255,255,255,0.5)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 32, 32);
+  dotTex = new THREE.CanvasTexture(cv);
+  dotTex.colorSpace = THREE.SRGBColorSpace;
+  return dotTex;
 }
 
 // The red "!" that pops up over a hunter when it starts chasing you.
