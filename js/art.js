@@ -81,8 +81,8 @@ function spikeGeometry(sh) {
   return mergeGeometries(list);
 }
 
-// Geometry and materials are built once per species and shared by every fish of it.
-const cache = new Map();
+// Geometry is built once per species and shared by every fish of it; materials once per species + variant.
+const cache = new Map(), matCache = new Map();
 function partsFor(spec) {
   if (cache.has(spec.key)) return cache.get(spec.key);
   const sh = SHAPES[spec.shape], eye = spec.eye ?? 1;
@@ -95,35 +95,48 @@ function partsFor(spec) {
     side: flatFin([[0, 0], [-0.16, 0.05], [-0.13, -0.05]]),
     eye: new THREE.SphereGeometry(0.075 * eye, 10, 8),
     pupil: new THREE.SphereGeometry(0.042 * eye, 8, 6),
-    bodyMat: caustics(new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.55, metalness: 0.05 }), 0.3),
-    finMat: caustics(new THREE.MeshStandardMaterial({ color: spec.fin, flatShading: true, roughness: 0.6, side: THREE.DoubleSide }), 0.3),
-    spikes: spec.behavior === 'puff' ? spikeGeometry(sh) : null,
+    spikes: null, // built when a puffer or a spiny fish needs them
   };
   cache.set(spec.key, p);
   return p;
+}
+// Rare variants look different: golden is shiny metal, giant is darker, speedy glows blue, spiny has purple fins
+// (and spikes, added in makeFish).
+function matsFor(spec, variant) {
+  const key = `${spec.key}/${variant ?? ''}`;
+  if (matCache.has(key)) return matCache.get(key);
+  const std = o => caustics(new THREE.MeshStandardMaterial({ flatShading: true, roughness: 0.55, metalness: 0.05, ...o }), 0.3);
+  const m = variant === 'golden'
+    ? { body: std({ color: 0xffcf3a, metalness: 0.8, roughness: 0.25, emissive: 0x4a2a00 }), fin: std({ color: 0xffe27a, metalness: 0.6, roughness: 0.3, emissive: 0x3a2200, side: THREE.DoubleSide }) }
+    : {
+      body: std({ vertexColors: true, color: variant === 'giant' ? 0x8c8c8c : 0xffffff, emissive: variant === 'speedy' ? 0x1f7fff : 0x000000, emissiveIntensity: 0.6 }),
+      fin: std({ color: variant === 'spiny' ? 0x8a2ec8 : spec.fin, roughness: 0.6, side: THREE.DoubleSide, emissive: variant === 'speedy' ? 0x1f7fff : 0x000000, emissiveIntensity: 0.6 }),
+    };
+  matCache.set(key, m);
+  return m;
 }
 const eyeMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.25 });
 const pupilMat = new THREE.MeshStandardMaterial({ color: 0x111122, roughness: 0.2 });
 
 // One fish at length 1, facing +x. root: position and size; yaw: which way it faces; pitch: nose up or down;
-// tail: wags. The game scales root by the fish's length.
-export function makeFish(spec) {
-  const p = partsFor(spec), sh = p.sh;
+// tail: wags. The game scales root by the fish's length. variant: null or a key of VARIANTS.
+export function makeFish(spec, variant = null) {
+  const p = partsFor(spec), sh = p.sh, mats = matsFor(spec, variant);
   const root = new THREE.Group(), yaw = new THREE.Group(), pitch = new THREE.Group(), tail = new THREE.Group();
   root.add(yaw);
   yaw.add(pitch);
-  pitch.add(new THREE.Mesh(p.body, p.bodyMat));
+  pitch.add(new THREE.Mesh(p.body, mats.body));
   tail.position.x = -0.46;
-  tail.add(new THREE.Mesh(p.tail, p.finMat));
+  tail.add(new THREE.Mesh(p.tail, mats.fin));
   pitch.add(tail);
   if (spec.shape !== 'round') {
-    const d = new THREE.Mesh(p.dorsal, p.finMat);
+    const d = new THREE.Mesh(p.dorsal, mats.fin);
     d.position.set(0.02, sh.h / 2 * 0.9 * (sh.head ? 1.05 : 1), 0);
     d.scale.setScalar(spec.shape === 'disc' ? 1.5 : 1);
     pitch.add(d);
   }
   for (const side of [1, -1]) {
-    const f = new THREE.Mesh(p.side, p.finMat);
+    const f = new THREE.Mesh(p.side, mats.fin);
     f.position.set(0.1, -sh.h * 0.12, side * sh.w / 2 * 0.85);
     f.rotation.y = side * 0.5;
     pitch.add(f);
@@ -135,9 +148,10 @@ export function makeFish(spec) {
     pitch.add(e, pu);
   }
   let spikes = null;
-  if (p.spikes) {
-    spikes = new THREE.Mesh(p.spikes, p.finMat);
-    spikes.scale.setScalar(0.001);
+  if (spec.behavior === 'puff' || variant === 'spiny') { // puffers grow theirs when they puff up; spiny fish always have them
+    p.spikes ??= spikeGeometry(sh);
+    spikes = new THREE.Mesh(p.spikes, mats.fin);
+    spikes.scale.setScalar(variant === 'spiny' ? 0.85 : 0.001);
     pitch.add(spikes);
   }
   return { root, yaw, pitch, tail, spikes };
@@ -157,7 +171,7 @@ export function makeIcons(specs) {
   const out = {};
   for (const s of specs) {
     const f = makeFish(s);
-    f.yaw.rotation.y = -0.5;
+    f.yaw.rotation.y = s.shape === 'long' ? -0.25 : -0.5;
     if (f.spikes) f.spikes.scale.setScalar(0.6);
     sc.add(f.root);
     r.render(sc, cam);
@@ -185,18 +199,64 @@ const M = (x, y, z, rx = 0, ry = 0, rz = 0, sx = 1, sy = sx, sz = sx) =>
 const floorAt = (x, z, base) => base + 30 * Math.sin(x / 420) + 22 * Math.sin(z / 310 + x / 760);
 
 // The water's colour at a height: lighter near the surface, darker down deep. The fog follows it.
-export const waterAt = (zone, y, c = new THREE.Color()) =>
-  c.set(zone.water.bottom).lerp(new THREE.Color(zone.water.top), Math.min(1, Math.max(0, (y + WORLD.y) / (2 * WORLD.y))));
+// water: { top, bottom } colours (a level's own, or its zone's).
+export const waterAt = (water, y, c = new THREE.Color()) =>
+  c.set(water.bottom).lerp(new THREE.Color(water.top), Math.min(1, Math.max(0, (y + WORLD.y) / (2 * WORLD.y))));
 
-// Builds a zone's scenery into the scene. rand is a seeded generator, so a zone looks the same every time.
-// Returns update(dt, camera) for the moving bits (light rays, bubbles) and dispose().
-export function makeZone(zone, scene, rand) {
-  const group = new THREE.Group(), base = -WORLD.y - 70, R = (a, b) => a + rand() * (b - a);
+// Each level's landmark: big scenery that makes the spot recognisable, merged in with the other props.
+function landmark(kind, geos, R, base, rand, CORAL) {
+  const at = (x, z) => floorAt(x, z, base), pick = () => CORAL[Math.floor(rand() * CORAL.length)];
+  if (kind === 'garden') { // giant brain corals with tall coral trees around them
+    for (let i = 0; i < 7; i++) {
+      const x = -3600 + i * 1200 + R(-300, 300), z = R(-1900, -900), r = R(220, 340);
+      geos.push(colored(new THREE.IcosahedronGeometry(1, 2), pick(), M(x, at(x, z), z, 0, R(0, 3), 0, r, r * 0.65, r)));
+      for (let b = 0; b < 6; b++) {
+        const len = R(300, 520);
+        geos.push(colored(new THREE.CylinderGeometry(10, 22, len, 5).translate(0, len / 2, 0), pick(), M(x + R(-280, 280), at(x, z), z + R(-200, 200), R(-0.3, 0.3), 0, R(-0.5, 0.5))));
+      }
+    }
+  } else if (kind === 'grass') { // a seagrass meadow
+    for (let i = 0; i < 520; i++) {
+      const x = R(-4500, 4500), z = R(-2200, -150), h = R(70, 230);
+      geos.push(colored(new THREE.ConeGeometry(6, h, 3).translate(0, h / 2, 0), i % 3 ? 0x58b85c : 0x7fcf5a, M(x, at(x, z), z, R(-0.2, 0.2), R(0, 3), R(-0.3, 0.3))));
+    }
+  } else if (kind === 'wreck') { // a sunken ship, half buried and tilted, with barrels scattered around
+    const x = R(-400, 400), z = -1500, tilt = M(x, at(x, z) + 120, z, 0, 0.35, 0.18);
+    const part = (geo, color, m) => geos.push(colored(geo, color, tilt.clone().multiply(m)));
+    part(new THREE.BoxGeometry(1700, 300, 420), 0x5b4632, M(0, 0, 0));
+    part(new THREE.ConeGeometry(300, 420, 4).rotateZ(-Math.PI / 2), 0x5b4632, M(1060, 0, 0, Math.PI / 4, 0, 0, 1, 0.75, 1)); // bow
+    part(new THREE.BoxGeometry(420, 220, 320), 0x3e2f22, M(-450, 260, 0)); // cabin
+    part(new THREE.CylinderGeometry(20, 26, 1100, 6).translate(0, 550, 0), 0x3e2f22, M(150, 150, 0, 0, 0, -0.25)); // mast
+    part(new THREE.CylinderGeometry(18, 22, 650, 6).translate(0, 325, 0), 0x3e2f22, M(-200, 150, 0, 0, 0, 1.1)); // broken mast
+    for (let i = 0; i < 7; i++) {
+      const bx = x + R(-1000, 1000), bz = z + R(250, 600);
+      geos.push(colored(new THREE.CylinderGeometry(45, 45, 90, 8), 0x7a5a38, M(bx, at(bx, bz) + 40, bz, R(0, 1.6), 0, R(0, 1.6))));
+    }
+  } else if (kind === 'arches') { // stone arches standing on the floor, coral on top
+    for (let i = 0; i < 4; i++) {
+      const x = -3000 + i * 2000 + R(-300, 300), z = R(-2200, -900), r = R(380, 520), t = R(70, 110);
+      geos.push(colored(new THREE.TorusGeometry(r, t, 5, 12, Math.PI), 0x76889a, M(x, at(x, z) - t * 0.5, z, 0, R(-0.5, 0.5), 0)));
+      geos.push(colored(new THREE.IcosahedronGeometry(1, 1), pick(), M(x, at(x, z) + r + t * 0.6, z, 0, 0, 0, t * 1.2, t * 0.6, t * 1.2)));
+    }
+  } else if (kind === 'wall') { // the reef wall at the edge of the drop-off
+    for (let i = 0; i < 70; i++) {
+      const x = -4600 + i * 135 + R(-40, 40), z = R(-1500, -1250), h = R(500, 1100), r = R(140, 220), y0 = at(x, z);
+      for (let y = y0; y < y0 + h; y += r * 1.1) geos.push(colored(new THREE.DodecahedronGeometry(1, 0), (i + Math.round(y / r)) % 2 ? 0x6d7f92 : 0x7a8ea0, M(x, y, z + R(-60, 60), R(0, 3), R(0, 3), R(0, 3), r, r * 0.8, r)));
+      if (rand() < 0.7) geos.push(colored(new THREE.IcosahedronGeometry(1, 1), pick(), M(x, y0 + h, z + 40, 0, 0, 0, r * 0.8, r * 0.45, r * 0.8)));
+    }
+  }
+}
+
+// Builds one level's scenery into the scene: its zone's style with the level's own colours, prop mix and landmark.
+// rand is a seeded generator, so a level looks the same every time. Returns update(dt, camera) for the moving
+// bits (light rays, bubbles, marine snow) and dispose().
+export function makeZone(zone, spot, scene, rand) {
+  const group = new THREE.Group(), base = -WORLD.y - 70, R = (a, b) => a + rand() * (b - a), water = spot.water ?? zone.water;
   scene.add(group);
 
   // Background: a huge gradient wall far behind everything (no fog on it).
   const bg = new THREE.PlaneGeometry(16000, 9000, 1, 12), bc = new Float32Array(bg.attributes.position.count * 3), c = new THREE.Color();
-  for (let i = 0; i < bg.attributes.position.count; i++) waterAt(zone, bg.attributes.position.getY(i) * 0.9, c).toArray(bc, i * 3);
+  for (let i = 0; i < bg.attributes.position.count; i++) waterAt(water, bg.attributes.position.getY(i) * 0.9, c).toArray(bc, i * 3);
   bg.setAttribute('color', new THREE.BufferAttribute(bc, 3));
   const wall = new THREE.Mesh(bg, new THREE.MeshBasicMaterial({ vertexColors: true, fog: false }));
   wall.position.z = -3800;
@@ -207,7 +267,7 @@ export function makeZone(zone, scene, rand) {
   const fp = fl.attributes.position;
   for (let i = 0; i < fp.count; i++) fp.setY(i, floorAt(fp.getX(i), fp.getZ(i) - 2000, base) - base);
   fl.computeVertexNormals();
-  const floor = new THREE.Mesh(fl, caustics(new THREE.MeshStandardMaterial({ color: zone.floor, flatShading: true, roughness: 0.95 }), 0.55));
+  const floor = new THREE.Mesh(fl, caustics(new THREE.MeshStandardMaterial({ color: spot.floor ?? zone.floor, flatShading: true, roughness: 0.95 }), 0.55));
   floor.position.set(0, base, -2000);
   group.add(floor);
 
@@ -218,27 +278,30 @@ export function makeZone(zone, scene, rand) {
   group.add(surf);
 
   // Coral, rocks and weed behind the play plane (z < 0); the camera's perspective gives them parallax.
+  // The level sets how many props there are and how much of the mix is rock and weed.
   const CORAL = [0xff6f91, 0xff9f43, 0xb36bff, 0xffd166, 0x5ee6b0, 0xff5e5e];
-  const geos = [];
-  for (let i = 0; i < 150; i++) {
-    const x = R(-4200, 4200), z = R(-2900, -120), y = floorAt(x, z, base), kind = rand(), col = CORAL[Math.floor(rand() * CORAL.length)];
-    if (kind < 0.3) { // branching coral
+  const geos = [], kinds = [0.3, 0.2, 0.15, 0.1, 0.15 * (spot.rocks ?? 1), 0.1 * (spot.weed ?? 1)];
+  const total = kinds.reduce((a, b) => a + b), cut = kinds.map((k, i) => kinds.slice(0, i + 1).reduce((a, b) => a + b) / total);
+  for (let i = 0, n = spot.coral ?? 150; i < n; i++) {
+    const x = R(-4200, 4200), z = R(-2900, -120), y = floorAt(x, z, base), roll = rand(), col = CORAL[Math.floor(rand() * CORAL.length)];
+    const kind = cut.findIndex(c => roll < c); // 0 branch, 1 brain, 2 tube, 3 fan, 4 rock, 5 weed
+    if (kind === 0) { // branching coral
       for (let b = 0, n = 4 + Math.floor(rand() * 4); b < n; b++) {
         const len = R(90, 240), tilt = R(-0.7, 0.7), r = R(7, 13);
         geos.push(colored(new THREE.CylinderGeometry(r * 0.6, r, len, 5).translate(0, len / 2, 0), col, M(x + R(-20, 20), y, z + R(-20, 20), R(-0.3, 0.3), 0, tilt)));
       }
-    } else if (kind < 0.5) { // brain coral
+    } else if (kind === 1) { // brain coral
       const r = R(50, 120);
       geos.push(colored(new THREE.IcosahedronGeometry(1, 1), col, M(x, y, z, 0, R(0, 3), 0, r, r * 0.6, r)));
-    } else if (kind < 0.65) { // tube coral
+    } else if (kind === 2) { // tube coral
       for (let b = 0, n = 3 + Math.floor(rand() * 4); b < n; b++) {
         const h = R(60, 180), r = R(12, 22);
         geos.push(colored(new THREE.CylinderGeometry(r, r * 0.8, h, 7).translate(0, h / 2, 0), col, M(x + R(-40, 40), y, z + R(-30, 30))));
       }
-    } else if (kind < 0.75) { // sea fan
+    } else if (kind === 3) { // sea fan
       const r = R(90, 200);
       geos.push(colored(new THREE.CircleGeometry(1, 9, 0, Math.PI), col, M(x, y, z, 0, R(-0.4, 0.4), 0, r)));
-    } else if (kind < 0.9) { // rock
+    } else if (kind === 4) { // rock
       const r = R(50, 160);
       geos.push(colored(new THREE.DodecahedronGeometry(1, 0), 0x6f8796, M(x, y + r * 0.2, z, R(0, 3), R(0, 3), R(0, 3), r, r * R(0.5, 0.9), r)));
     } else { // weed
@@ -249,8 +312,8 @@ export function makeZone(zone, scene, rand) {
     }
   }
   // Rock spires rising from the floor behind the play area: mid-distance shapes that slide past as you swim.
-  for (let i = 0; i < 14; i++) {
-    const x = -4200 + i * 620 + R(-200, 200), z = R(-3100, -1700);
+  for (let i = 0, n = spot.spires ?? 14; i < n; i++) {
+    const x = -4200 + (i + 0.5) * 8400 / n + R(-200, 200), z = R(-3100, -1700);
     let y = floorAt(x, z, base), r = R(110, 180);
     for (let k = 0, n = 3 + Math.floor(rand() * 4); k < n; k++, r *= R(0.72, 0.88)) {
       geos.push(colored(new THREE.DodecahedronGeometry(1, 0), k % 2 ? 0x7d93a0 : 0x6a8290, M(x + R(-40, 40), y + r * 0.7, z + R(-30, 30), R(0, 3), R(0, 3), R(0, 3), r, r * 1.2, r)));
@@ -258,15 +321,16 @@ export function makeZone(zone, scene, rand) {
     }
     if (rand() < 0.6) geos.push(colored(new THREE.IcosahedronGeometry(1, 1), CORAL[Math.floor(rand() * CORAL.length)], M(x, y + 10, z, 0, 0, 0, r * 0.9, r * 0.5, r * 0.9)));
   }
+  landmark(spot.landmark, geos, R, base, rand, CORAL);
   const props = new THREE.Mesh(mergeGeometries(geos), caustics(new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.8, side: THREE.DoubleSide }), 0.4));
   group.add(props);
 
   // Light rays from the surface: faint additive cones that sway.
   const rayMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.06, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false });
   const rays = [];
-  for (let i = 0; i < 9; i++) {
+  for (let i = 0, n = spot.rays ?? 9; i < n; i++) {
     const ray = new THREE.Mesh(new THREE.CylinderGeometry(30, 260, 3600, 12, 1, true).translate(0, -1800, 0), rayMat);
-    ray.position.set(-4000 + i * 1000 + R(-200, 200), WORLD.y + 100, R(-1400, -300));
+    ray.position.set(-4500 + (i + 0.5) * 9000 / n + R(-200, 200), WORLD.y + 100, R(-1400, -300));
     ray.userData.phase = rand() * 6;
     rays.push(ray);
     group.add(ray);

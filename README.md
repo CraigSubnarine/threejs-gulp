@@ -12,27 +12,61 @@ No build step and no asset files: three.js loads from a CDN through an import ma
   - **Computer:** the fish follows the mouse, or use the arrow keys or WASD. Click or press Space to boost.
   - **Boost:** about half a second at 2.3× speed, the way you're steering. The button's ring then refills like a clock over 4 s, and it glows when it's ready (`BOOST` in `data.js`).
   - **Pause:** the top-right button, or Esc / P.
-- **Status:** Step 1 of 3 is live: the Sunny Reef and the core loop. The full plan is in `GameDev/gulp-plan.md`.
+- **Status:** Step 2 is live: the Sunny Reef's 5 levels, keeping your size between levels, more fish and rare variants, the skill tree and unlockable classes. Next are the apex bosses. The full plan is in `GameDev/gulp-plan.md`.
 
 ## How it plays
 
-- **The food chain:** every fish has a tier, from 0 (tiny fry) to 3. You start each zone at tier 1. You can eat fish below your tier, fish above it eat you, and fish at your tier just bump into you.
+- **The food chain:** every fish has a tier, from 0 (tiny fry) to 3. You start each level at tier 1. You can eat fish below your tier, fish above it eat you, and fish at your tier just bump into you.
   - The bar at the top shows each of the zone's fish: green means food, red means danger.
-- **Growing:** eating fills your meter. You grow a tier at each third, and the camera pulls back so you can see more. A full meter clears the zone.
-- **One life:** if a bigger fish catches you, the run is over.
+- **Growing:** eating fills your meter. You grow a tier at each third, and the camera pulls back so you can see more. A full meter clears the level.
+- **Keeping your size:** when a level clears, the camera pulls back while you stay the same size, so the view widens. Then the next level fades in. You're a tier-1 fish there, and its fish are bigger than the last level's, so you're back in the middle of the food chain.
+  - Under the hood, every level is built at the same scale. The game rescales everything by 200/70 behind the fade, so the numbers never blow up.
+- **One life:** if a bigger fish catches you, the run is over, unless a skill saves you.
 - **Combos:** eats less than 1.5 s apart multiply the points (up to ×8).
-- **The Sunny Reef:**
-  - Minnows come in schools and dart away.
-  - Butterflyfish and parrotfish flee when you're bigger.
-  - Groupers hunt you: a red "!" means one is chasing, and it gives up after a few seconds.
-  - Pufferfish swell up into a danger when you swim close, so sneak up or wait for them to shrink.
-- **Deeper:** clearing the reef pays a bonus and starts it again at the next depth, with faster fish.
+- **The Sunny Reef** has 5 levels, each its own spot with its own colours, prop mix, fish mix and a landmark built in code:
+  1. Coral Garden
+  2. Sandy Shallows
+  3. Shipwreck Cove
+  4. Arch Rocks
+  5. The Drop-off
+
+  After level 5 the reef starts over, with faster fish; the apex boss comes in Step 3.
+- **The reef's fish:**
+  - **Food:** minnows (schools that dart away) and gobies.
+  - **Your size at first:** butterflyfish and damselfish.
+  - **Puffers:** they swell into a danger when you're close.
+  - **Bigger:** parrotfish, and triggerfish, which hunt you.
+  - **Biggest:** groupers (hunters) and snappers.
+
+  A red "!" means a hunter is chasing you; it gives up after a few seconds.
+- **Rare variants (8%):**
+
+  | Variant | Effect |
+  |---|---|
+  | Golden | ×5 points |
+  | Spiny | stings you for a moment, but gives ×2 growth |
+  | Speedy | fast and jumpy, ×2 points |
+  | Giant | one size bigger |
+- **Skill tree:** after each level you get 1 point.
+  - **Branches:** Fins (speed and boost), Jaws (reach, growth, combos, rare fish) and Scales (survival). Each has 5 nodes.
+  - **Cost:** node *n* costs *n* points and needs the node before it, so a full run can't buy everything (45 points vs about 25).
+  - **Capstones:** Torpedo (eat your own size while boosting), Gulp (swallow one size bigger once per level) and Second Wind (survive being eaten once).
+  - **Combos:** owning nodes in two branches unlocks a bonus, such as Feeding Frenzy, Ghost, Shark Skin or Hoarder.
+- **Classes**, picked on the main menu:
+
+  | Class | What it's like | Unlock |
+  |---|---|---|
+  | Scamp | all-rounder | open from the start |
+  | Dart | fast, with a small bite | reach level 3 |
+  | Puffy | survives a bite each level, but slower | clear the reef |
+  | Gobbler | big bite and growth, but a slow boost | 20,000 points in one run |
 
 ## Replay and competition hooks
 
-- A score, always: points per fish × combo, plus a clear bonus per depth. Your best score and depth are saved.
-- Seeded spawns: each run has a seed, and the same seed gives the same sea (ready for a Daily Dive and leaderboards).
-- Next (Steps 2-3): apex predator bosses, mutations between zones, 5 zones from the reef to the abyss, endless mode and the Daily Dive. Later: Supabase leaderboards.
+- A score, always: points per fish × combo, plus a clear bonus per level. Your best score and level are saved.
+- Seeded spawns: each run has a seed, and the same seed gives the same sea and rare fish (ready for a Daily Dive and leaderboards).
+- Build variety: 4 classes × a skill tree you can only partly fill.
+- Next: apex predator bosses, then the Kelp Forest and deeper zones, endless mode and the Daily Dive. Later: Supabase leaderboards.
 
 ## Code layout
 

@@ -45,8 +45,8 @@
   #combo { font-family: "Lilita One", sans-serif; font-size: 1.4rem; color: #ffe066; }
   #where { margin-left: auto; font-weight: 800; font-size: .9rem; opacity: .9; text-align: right; }
   #chain { display: flex; gap: 6px; margin-top: 2px; }
-  .chip { position: relative; width: 52px; height: 40px; border-radius: 12px; background: rgb(255 255 255 / .2); border: 3px solid transparent; display: flex; align-items: center; justify-content: center; transition: border-color .3s, background .3s, opacity .3s; }
-  .chip img { width: 48px; height: 32px; }
+  .chip { position: relative; height: 40px; padding: 0 3px; border-radius: 12px; background: rgb(255 255 255 / .2); border: 3px solid transparent; display: flex; align-items: center; justify-content: center; transition: border-color .3s, background .3s, opacity .3s; }
+  .chip img { width: 33px; height: 22px; margin: 0 -3px; }
   .chip.food { border-color: var(--good); background: rgb(46 201 138 / .3); }
   .chip.danger { border-color: var(--bad); background: rgb(255 77 77 / .25); }
   .chip.same { opacity: .65; }
@@ -65,6 +65,32 @@
   #pops { position: fixed; inset: 0; z-index: 1; pointer-events: none; overflow: hidden; }
   .pop { position: absolute; transform: translate(-50%, -50%); font-family: "Lilita One", sans-serif; color: #fff; font-size: 1.2rem; text-shadow: 0 2px 0 rgb(0 30 50 / .6); animation: rise .8s ease-out forwards; }
   .pop.combo { color: #ffe066; font-size: 1.5rem; }
+  .pop.gold { color: #ffd23b; font-size: 1.7rem; text-shadow: 0 2px 0 #8a5a00, 0 0 12px rgb(255 210 59 / .8); }
+  .pop.ouch { color: #ff8ad8; font-size: 1.3rem; }
+  #perks { margin-top: 4px; font-size: .75rem; font-weight: 800; letter-spacing: .04em; color: #ffe8a8; min-height: 1em; }
+  /* The fade between levels. */
+  #fade { position: fixed; inset: 0; z-index: 1; background: #0b3a52; opacity: 0; pointer-events: none; }
+  /* Class picker on the main menu. */
+  #classes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .cls { min-height: 64px; padding: 4px 2px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: .8rem; border: 3px solid transparent; }
+  .cls img { width: 54px; height: 36px; }
+  .cls.sel { border-color: var(--orange); background: #ffe6d6; }
+  .cls.locked img { filter: grayscale(1) brightness(.6); opacity: .6; }
+  .cls.locked span { color: var(--muted); }
+  /* The skill tree: three branches side by side, each a column of nodes that unlock top to bottom. */
+  .screen.wide { width: min(460px, 100%); }
+  #treeGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .branch { display: flex; flex-direction: column; gap: 5px; }
+  .branch h3 { margin: 0; font-family: "Lilita One", sans-serif; font-weight: 400; color: var(--c); font-size: 1.15rem; }
+  .node { min-height: 50px; padding: 4px; font-size: .78rem; line-height: 1.15; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border: 2px solid transparent; }
+  .node small { font-size: .7rem; color: var(--muted); }
+  .node.owned { background: var(--c); color: #fff; }
+  .node.owned small { color: #fff; }
+  .node.open { border: 2px dashed var(--c); background: #fff; }
+  .node.locked { opacity: .45; }
+  .node.sel { outline: 3px solid var(--text); outline-offset: 1px; }
+  #treeCombos { font-size: .8rem; text-align: left; color: var(--muted); display: flex; flex-direction: column; gap: 3px; }
+  #treeCombos .on { color: var(--good); }
   @keyframes rise { to { transform: translate(-50%, -160%); opacity: 0; } }
   /* The floating joystick: a ring where your thumb went down and a knob that follows it. */
   #stick { position: fixed; z-index: 1; width: 112px; height: 112px; margin: -56px 0 0 -56px; border-radius: 50%; border: 3px solid rgb(255 255 255 / .35); background: rgb(255 255 255 / .08); pointer-events: none; }
@@ -92,8 +118,10 @@
 <div id="hud" hidden>
   <div class="top"><span id="score">0</span><span id="combo"></span><span id="where"></span></div>
   <div id="chain"></div>
-  <div id="meterRow"><img id="youIcon" alt=""><div id="meter"><i id="meterFill"></i><s style="left:33.3%"></s><s style="left:66.6%"></s></div></div>
+  <div id="meterRow"><div id="meter"><i id="meterFill"></i><s style="left:33.3%"></s><s style="left:66.6%"></s></div></div>
+  <div id="perks"></div>
 </div>
+<div id="fade"></div>
 <div id="banner" hidden><b id="bannerTitle"></b><span id="bannerSub"></span></div>
 <div id="pops"></div>
 <div id="stick" hidden><i id="knob"></i></div>
@@ -101,8 +129,10 @@
 <div id="ui">
   <section class="screen" id="main">
     <h1>GULP!</h1>
-    <p>Eat smaller fish to grow. Steer clear of bigger ones. Fill your meter to clear the reef, then dive deeper.</p>
+    <p>Eat smaller fish to grow. Steer clear of bigger ones. Fill your meter to clear a level, then grow into a bigger sea.</p>
     <p class="big" id="mainBest"></p>
+    <div id="classes"></div>
+    <p class="hint" id="classInfo"></p>
     <button class="primary" data-action="play">Play</button>
     <button data-action="settings">Settings</button>
     <a href="../">&larr; Back to Arcade</a>
@@ -125,11 +155,22 @@
     <button data-action="menu">Main menu</button>
   </section>
 
+  <section class="screen wide" id="tree" hidden>
+    <h2 id="treeTitle">LEVEL CLEAR!</h2>
+    <p class="big" id="treePoints"></p>
+    <div id="treeGrid"></div>
+    <p class="hint" id="treeDetail"></p>
+    <button class="primary" data-action="learn" id="learnBtn" hidden>Learn</button>
+    <button data-action="next" id="treeNext">Next level</button>
+    <div id="treeCombos"></div>
+  </section>
+
   <section class="screen" id="over" hidden>
     <h2>GULPED!</h2>
     <p id="overWho"></p>
     <p class="big" id="overScore"></p>
     <p id="overBest"></p>
+    <p class="big" id="overUnlock"></p>
     <button class="primary" data-action="play">Play again</button>
     <button data-action="menu">Main menu</button>
   </section>

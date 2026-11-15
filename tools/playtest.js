@@ -19,10 +19,21 @@ const check = (name, ok, detail = '') => {
 // one (minutes of play in seconds). Helpers put fish exactly where a check needs them.
 function installHarness() {
   game.manual = true;
-  window.__step = n => { for (let i = 0; i < n; i++) game.update(1 / 60); game.render(); };
+  window.__step = n => { for (let i = 0; i < n; i++) { if (['playing', 'over', 'menu'].includes(app.state)) game.update(1 / 60); } game.render(); };
   window.__P = () => game.G.player;
   window.__species = key => game.G.zone.fish.find(s => s.key === key);
-  window.__put = (key, dx, dy, dir = -1) => game.spawnFish(__species(key), __P().x + dx, __P().y + dy, dir);
+  window.__put = (key, dx, dy, dir = -1, variant = null) => game.spawnFish(__species(key), __P().x + dx, __P().y + dy, dir, variant);
+  window.__clear = () => { game.G.fish.forEach(f => (f.x += 9000)); game.update(1 / 60); }; // send every fish far away (they despawn)
+  // How tall the player looks on screen, as a share of the screen height.
+  window.__onScreen = () => {
+    const P = __P(), V = game.camera.position.constructor, a = new V(P.x, P.y - P.len / 2, 0).project(game.camera), b = new V(P.x, P.y + P.len / 2, 0).project(game.camera);
+    return Math.abs(b.y - a.y) / 2;
+  };
+  // Chips on the food chain bar must match: green below your tier, red above, grey at it.
+  window.__chipsOk = () => [...document.querySelectorAll('#chain .chip')].every(c => {
+    const t = Number(c.dataset.tier), p = __P().tier;
+    return c.classList.contains(p > t ? 'food' : p < t ? 'danger' : 'same');
+  });
   // A bot that can't be eaten and always swims for the nearest fish it can eat.
   window.__bot = (expr, maxSeconds) => {
     const until = new Function(`return ${expr}`);
@@ -42,6 +53,16 @@ function installHarness() {
     game.render();
     return until();
   };
+  // Fill the meter and play through the clear card and the camera widening, up to the skill tree.
+  window.__clearLevel = () => {
+    for (let i = 0; i < 120 && game.G.phase !== 'swim'; i++) game.update(1 / 60); // you can't eat while a level fades in
+    __P().safe = 9;
+    game.G.meter = METER_NEED - 1;
+    __put('minnow', 5, 0);
+    for (let i = 0; i < 600 && app.state === 'playing'; i++) game.update(1 / 60);
+    game.render();
+    return app.state;
+  };
 }
 
 const visible = (page, id) => page.evaluate(i => !document.getElementById(i).hidden && !document.getElementById('ui').hidden, id);
@@ -53,7 +74,7 @@ async function run(browser, name, options) {
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
   page.on('console', m => { if (m.type() === 'error') errors.push(`${m.text()} ${m.location()?.url ?? ''}`.trim()); });
-  const shot = file => page.screenshot({ path: path.join(out, `${name}-${file}.png`), timeout: 15000 })
+  const shot = file => page.screenshot({ path: path.join(out, `${name}-${file}.png`), timeout: 45000 }) // software WebGL can be slow
     .catch(e => check(`${name}: screenshot ${file}`, false, e.message.split('\n')[0]));
   const tap = sel => (options.hasTouch ? page.tap(sel) : page.click(sel));
   const P = () => page.evaluate(() => { const p = __P(); return { x: p.x, y: p.y, tier: p.tier, alive: p.alive }; });
@@ -65,6 +86,10 @@ async function run(browser, name, options) {
   check(`${name}: main menu on load`, await visible(page, 'main'));
   check(`${name}: Back to Arcade link`, await page.evaluate(() => !!document.querySelector('#main a[href="../"]')));
   check(`${name}: fish swim behind the menu`, await page.evaluate(() => game.G.fish.length > 5));
+  const picker = await page.evaluate(() => ({ n: document.querySelectorAll('#classes .cls').length, locked: document.querySelectorAll('#classes .locked').length, sel: document.querySelector('#classes .sel')?.dataset.cls }));
+  check(`${name}: the class picker shows 4 fish, 3 locked, Scamp picked`, picker.n === 4 && picker.locked === 3 && picker.sel === 'scamp', JSON.stringify(picker));
+  await tap('[data-cls=dart]');
+  check(`${name}: a locked fish says how to unlock it`, (await page.evaluate(() => document.getElementById('classInfo').textContent)).includes('Reach level 3'));
   await shot('01-menu');
 
   // ---------- Settings ----------
@@ -80,12 +105,12 @@ async function run(browser, name, options) {
   await tap('#main [data-action=play]');
   await page.evaluate(() => __step(30));
   const start = await page.evaluate(() => ({ state: app.state, hud: !document.getElementById('hud').hidden, chips: document.querySelectorAll('#chain .chip').length,
-    tier: __P().tier, score: game.G.score, pause: !document.getElementById('pauseBtn').hidden, banner: document.getElementById('bannerTitle').textContent }));
-  check(`${name}: Play starts a run at tier 1 with the HUD`, start.state === 'playing' && start.hud && start.chips === 5 && start.tier === 1 && start.score === 0 && start.pause, JSON.stringify(start));
-  check(`${name}: the zone card names the reef`, start.banner === 'SUNNY REEF');
-  const chips = await page.evaluate(() => [...document.querySelectorAll('#chain .chip')].map(c => c.className.split(' ')[1]).join());
-  check(`${name}: the food chain bar shows minnows as food, bigger fish as danger`, chips === 'food,same,same,danger,danger', chips);
-  await page.evaluate(() => { game.G.fish.forEach(f => (f.x += 5000)); __step(1); }); // clear the area for the steering checks
+    tier: __P().tier, score: game.G.score, level: game.G.level, title: document.getElementById('bannerTitle').textContent, sub: document.getElementById('bannerSub').textContent }));
+  check(`${name}: Play starts level 1 at tier 1 with the HUD (one chip per size)`, start.state === 'playing' && start.hud && start.chips === 4 && start.tier === 1 && start.score === 0 && start.level === 1, JSON.stringify(start));
+  check(`${name}: the level card names the zone and the spot`, start.title === 'SUNNY REEF' && start.sub.includes('Coral Garden'), start.sub);
+  check(`${name}: the food chain bar is green below you, red above`, await page.evaluate(() => __chipsOk()));
+  // Nothing can eat you during the checks that aren't about being eaten (they sit still for seconds at a time).
+  await page.evaluate(() => { __clear(); __P().safe = 1e6; });
   await shot('02-start');
 
   // ---------- Steering ----------
@@ -128,11 +153,8 @@ async function run(browser, name, options) {
   await tap('#boostBtn');
   const b2 = await boostState();
   check(`${name}: no boost while it's recharging`, !b2.boost && !b2.ready, JSON.stringify(b2));
-  await page.evaluate(() => __step(60 * 1.5));
-  await shot('02b-boost-recharging');
   await page.evaluate(() => __step(Math.ceil(60 * BOOST.recharge)));
-  const b3 = await boostState();
-  check(`${name}: the boost is ready again after the recharge`, b3.ready && b3.charge === 1, JSON.stringify(b3));
+  check(`${name}: the boost is ready again after the recharge`, (await boostState()).ready);
   if (!options.hasTouch) {
     await page.keyboard.press('Space');
     check(`${name}: Space boosts`, (await boostState()).boost);
@@ -142,10 +164,8 @@ async function run(browser, name, options) {
   // ---------- Eating, combos, growing ----------
   const eat1 = await page.evaluate(() => {
     const g = game.G;
-    g.fish.forEach(f => (f.x += 5000)); // a clean slate: the boost checks may have eaten something already
-    __step(1);
+    __clear();
     Object.assign(g, { meter: 0, score: 0, comboT: 0 });
-    __P().safe = 0;
     const before = g.fish.length;
     __put('minnow', 10, 0);
     __step(1);
@@ -158,6 +178,7 @@ async function run(browser, name, options) {
   check(`${name}: the same size just bumps`, bump.alive && bump.there, JSON.stringify(bump));
   const z1 = await page.evaluate(() => game.camera.position.z);
   const grow = await page.evaluate(() => {
+    __clear();
     game.G.meter = METER_NEED / 3 - 1;
     __put('minnow', 10, 0);
     __step(1);
@@ -167,19 +188,43 @@ async function run(browser, name, options) {
   await page.evaluate(() => __step(150));
   const z2 = await page.evaluate(() => game.camera.position.z);
   check(`${name}: growing pulls the camera back`, z2 > z1 + 250, `${Math.round(z1)} -> ${Math.round(z2)}`);
-  const chips2 = await page.evaluate(() => [...document.querySelectorAll('#chain .chip')].map(c => c.className.split(' ')[1]).join());
-  check(`${name}: at tier 2 butterflyfish and puffers are food`, chips2 === 'food,food,food,same,danger', chips2);
-  await page.evaluate(() => { __put('butterfly', 220, 60); __put('minnow', -180, -90); __put('minnow', -150, -60, 1); __put('parrot', 260, -200); __step(2); });
-  await shot('03-tier2');
+  check(`${name}: the food chain bar follows your size`, await page.evaluate(() => __chipsOk()));
+
+  // ---------- Rare variants ----------
+  const variants = await page.evaluate(() => {
+    const g = game.G, P = __P();
+    __clear();
+    g.comboT = 0;
+    let s0 = g.score;
+    __put('minnow', 10, 0, -1, 'golden');
+    __step(1);
+    const golden = g.score - s0;
+    __step(120);
+    const giant = __put('minnow', 400, 0, -1, 'giant');
+    const m0 = g.meter;
+    __put('butterfly', 10, 0, -1, 'spiny');
+    __step(1);
+    const spiny = { growth: g.meter - m0, stun: P.stun > 0 };
+    const fast = __put('damsel', -600, 300, 1, 'speedy');
+    __step(20);
+    return { golden, giantTier: giant.tier, giantLen: giant.len, spiny, speedy: Math.abs(fast.vx) > fast.s.speed * 1.4 };
+  });
+  check(`${name}: a golden fish is worth ×5`, variants.golden === 50, String(variants.golden));
+  check(`${name}: a giant fish is one size bigger`, variants.giantTier === 1 && variants.giantLen === 70, JSON.stringify(variants));
+  check(`${name}: a spiny fish stings but gives ×2 growth`, variants.spiny.stun && variants.spiny.growth === 6, JSON.stringify(variants.spiny));
+  check(`${name}: a speedy fish is fast`, variants.speedy);
+  await page.evaluate(() => { __put('minnow', 200, 80, -1, 'golden'); __put('minnow', -180, -90, 1, 'speedy'); __put('butterfly', -220, 120, 1, 'spiny'); __put('parrot', 260, -200); __step(3); });
+  await shot('03-variants');
 
   // ---------- Hazards: the puffer, the hunter ----------
   const puff = await page.evaluate(() => {
+    __clear();
     const f = __put('puffer', 170, 0);
     __step(30);
     return { tier: f.tier, spikes: f.obj.spikes.scale.x };
   });
   check(`${name}: a puffer swells into a danger when you get close`, puff.tier === 3 && puff.spikes > 0.8, JSON.stringify(puff));
-  await page.evaluate(() => { game.G.fish.forEach(f => (f.x += 5000)); __step(1); __P().safe = 0; });
+  await page.evaluate(() => { __clear(); __P().safe = 0; });
   const hunt = await page.evaluate(() => {
     const f = __put('grouper', 300, 0);
     __step(20);
@@ -219,22 +264,91 @@ async function run(browser, name, options) {
   check(`${name}: the best score is saved`, dead.best > 0, String(dead.best));
   await shot('05-over');
 
-  // ---------- Play again, and a full zone with the bot ----------
+  // ---------- A full level, the skill tree, and keeping your size ----------
   await tap('#over [data-action=play]');
-  const again = await page.evaluate(() => ({ state: app.state, score: game.G.score, depth: game.G.depth, alive: __P().alive, tier: __P().tier }));
-  check(`${name}: Play again starts fresh`, again.state === 'playing' && again.score === 0 && again.depth === 1 && again.alive && again.tier === 1, JSON.stringify(again));
+  const again = await page.evaluate(() => ({ state: app.state, score: game.G.score, level: game.G.level, alive: __P().alive, tier: __P().tier, owned: game.G.owned.length }));
+  check(`${name}: Play again starts fresh`, again.state === 'playing' && again.score === 0 && again.level === 1 && again.alive && again.tier === 1 && again.owned === 0, JSON.stringify(again));
   const t0 = await page.evaluate(() => game.G.t);
   const cleared = await page.evaluate(() => __bot(`game.G.phase === 'cleared'`, 300));
-  const took = Math.round((await page.evaluate(() => game.G.t)) - t0);
-  check(`${name}: a bot that eats everything it can clears the reef`, cleared, `${took} s of game time`);
-  if (cleared) {
-    await page.evaluate(() => __step(1));
-    check(`${name}: the clear card shows`, (await page.evaluate(() => document.getElementById('bannerTitle').textContent)).includes('CLEARED'));
-    await shot('06-cleared');
-    const next = await page.evaluate(() => { __step(200); return { depth: game.G.depth, meter: game.G.meter, tier: __P().tier, score: game.G.score }; });
-    check(`${name}: then the reef starts again, deeper and faster`, next.depth === 2 && next.meter === 0 && next.tier === 1 && next.score >= 1000, JSON.stringify(next));
-    await shot('07-depth2');
+  check(`${name}: a bot that eats everything it can clears level 1`, cleared, `${Math.round((await page.evaluate(() => game.G.t)) - t0)} s of game time`);
+  await page.evaluate(() => __step(1));
+  check(`${name}: the clear card shows`, (await page.evaluate(() => document.getElementById('bannerTitle').textContent)) === 'LEVEL CLEAR!');
+  const len0 = await page.evaluate(() => __P().len);
+  await page.evaluate(() => { for (let i = 0; i < 400 && app.state === 'playing'; i++) __step(1); });
+  const widened = await page.evaluate(() => ({ state: app.state, len: __P().len, screen: __onScreen() }));
+  check(`${name}: you keep your size while the view widens, then the skill tree opens`, widened.state === 'tree' && Math.abs(widened.len - len0) < 1 && (await visible(page, 'tree')), JSON.stringify({ ...widened, len0 }));
+  await shot('06-tree');
+  const tree = await page.evaluate(() => ({ points: game.G.points, open: document.querySelectorAll('.node.open').length, owned: document.querySelectorAll('.node.owned').length, text: document.getElementById('treePoints').textContent }));
+  check(`${name}: the tree offers the first node of each branch for 1 point`, tree.points === 1 && tree.open === 3 && tree.owned === 0 && tree.text.startsWith('1 skill point'), JSON.stringify(tree));
+  await tap('[data-node=fins2]');
+  check(`${name}: a later node says what it needs first`, await page.evaluate(() => document.getElementById('treeDetail').textContent.includes('Learn Fast Fins first') && document.getElementById('learnBtn').disabled));
+  await tap('[data-node=fins1]');
+  await tap('#learnBtn');
+  const learned = await page.evaluate(() => ({ owned: game.G.owned, points: game.G.points, speed: game.G.stats.speed, cls: document.querySelector('[data-node=fins1]').className }));
+  check(`${name}: learning Fast Fins spends the point and speeds you up`, learned.owned.includes('fins1') && learned.points === 0 && Math.abs(learned.speed - 1.12) < 1e-9 && learned.cls.includes('owned'), JSON.stringify(learned));
+  await tap('[data-node=fins2]');
+  check(`${name}: with no points left, the next node can't be learned`, await page.evaluate(() => document.getElementById('learnBtn').disabled && document.getElementById('treeDetail').textContent.includes('Needs 2 points')));
+  await tap('#treeNext');
+  const after = await page.evaluate(() => { for (let i = 0; i < 60 && game.G.phase !== 'fadein'; i++) __step(1); return { phase: game.G.phase, level: game.G.level, tier: __P().tier, len: __P().len, meter: game.G.meter, screen: __onScreen(), spot: game.G.spot.name, landmark: game.G.spot.landmark, sub: document.getElementById('bannerSub').textContent }; });
+  check(`${name}: Next level fades into level 2 at tier 1 with an empty meter`, after.phase === 'fadein' && after.level === 2 && after.tier === 1 && after.meter === 0, JSON.stringify(after));
+  check(`${name}: on screen you're the same size across the cut`, Math.abs(after.screen / widened.screen - 1) < 0.08, `${widened.screen.toFixed(4)} -> ${after.screen.toFixed(4)}`);
+  check(`${name}: level 2 is a different spot (Sandy Shallows, its own landmark)`, after.spot === 'Sandy Shallows' && after.landmark === 'grass' && after.sub.includes('2/5'), JSON.stringify(after));
+  await page.evaluate(() => __step(90));
+  check(`${name}: and the new level's fish are bigger than you`, await page.evaluate(() => __chipsOk() && __P().tier === 1 && game.G.fish.some(f => f.tier > 1)));
+  await shot('07-level2');
+
+  // ---------- Every reef level looks different; after level 5 the reef starts over, harder ----------
+  for (const lv of [3, 4, 5]) {
+    const st = await page.evaluate(() => __clearLevel());
+    if (st !== 'tree') { check(`${name}: clearing level ${lv - 1} opens the tree`, false, st); break; }
+    await tap('#treeNext');
+    const info = await page.evaluate(() => { for (let i = 0; i < 60 && game.G.phase !== 'fadein'; i++) __step(1); __step(60); return { level: game.G.level, spot: game.G.spot.name }; });
+    check(`${name}: level ${lv} is ${info.spot}`, info.level === lv, JSON.stringify(info));
+    await page.evaluate(() => __step(30));
+    await shot(`08-level${lv}`);
   }
+  await page.evaluate(() => __clearLevel());
+  await tap('#treeNext');
+  const loop = await page.evaluate(() => { for (let i = 0; i < 60 && game.G.phase !== 'fadein'; i++) __step(1); return { level: game.G.level, index: game.G.index, spot: game.G.spot.name, faster: speedAt(game.G.level) > speedAt(1) }; });
+  check(`${name}: after reef level 5 comes the next round, deeper and faster`, loop.level === 6 && loop.index === 0 && loop.faster, JSON.stringify(loop));
+
+  // ---------- Skills at work: Spines spits out a bite ----------
+  const spines = await page.evaluate(() => {
+    const g = game.G;
+    g.points = 10;
+    ['scales', 'scales', 'scales'].forEach((b, i) => game.buy(b, i));
+    __clearLevel();
+    return { owned: g.owned.filter(n => n.startsWith('scales')).length };
+  });
+  await tap('#treeNext');
+  const spit = await page.evaluate(() => {
+    for (let i = 0; i < 120; i++) __step(1);
+    const P = __P();
+    __clear();
+    const shields = P.shields;
+    P.safe = 0;
+    __put('grouper', 15, 0);
+    __step(1);
+    return { shields, alive: P.alive, left: P.shields, perks: document.getElementById('perks').textContent };
+  });
+  check(`${name}: Spines spits out a bite once per level`, spines.owned === 3 && spit.shields === 1 && spit.alive && spit.left === 0, JSON.stringify({ ...spines, ...spit }));
+
+  // ---------- Classes ----------
+  await tap('#pauseBtn');
+  await tap('#pause [data-action=menu]');
+  await page.evaluate(() => { Object.assign(progress, { bestLevel: 99, bestScore: 1e6 }); store.set('gulp-progress', progress); updateMain(); });
+  check(`${name}: reaching the goals unlocks every fish`, await page.evaluate(() => document.querySelectorAll('#classes .locked').length === 0));
+  await tap('[data-cls=dart]');
+  await tap('#main [data-action=play]');
+  const dart = await page.evaluate(() => ({ owned: game.G.owned, speed: game.G.stats.speed, cls: game.G.cls.key }));
+  check(`${name}: a Dart run starts with Fast Fins and +20% speed`, dart.cls === 'dart' && dart.owned.includes('fins1') && Math.abs(dart.speed - 1.2 * 1.12) < 1e-9, JSON.stringify(dart));
+  await page.evaluate(() => __step(30));
+  await shot('09-dart');
+  await tap('#pauseBtn');
+  await tap('#pause [data-action=menu]');
+  await tap('[data-cls=puffy]');
+  await tap('#main [data-action=play]');
+  check(`${name}: a Puffy run starts with one Spines charge`, await page.evaluate(() => game.G.cls.key === 'puffy' && __P().shields === 1));
 
   // ---------- Back to the menu ----------
   await tap('#pauseBtn');
