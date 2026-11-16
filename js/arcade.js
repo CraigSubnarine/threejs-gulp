@@ -52,8 +52,10 @@ function createArcade(game, onChange = () => {}) {
     // Posts a score (queued first, so a dropped connection doesn't lose it). Resolves true once it's on the board.
     async post(score, mode = '', seed = null) {
       if (!account.user) return false;
-      local.set('arcade-pending', [...local.get('arcade-pending', []), { game, score: Math.floor(score), mode, seed: seed == null ? null : String(seed).slice(0, 40), user: account.user.id }]);
-      return flush();
+      const id = Math.random().toString(36).slice(2);
+      local.set('arcade-pending', [...local.get('arcade-pending', []), { id, game, score: Math.floor(score), mode, seed: seed == null ? null : String(seed).slice(0, 40), user: account.user.id }]);
+      await flush();
+      return sent.has(id);
     },
     // The top n players (their best scores) on a board: [{ name, score, me }], or null if it can't load.
     async top(mode = '', n = 10) {
@@ -85,23 +87,21 @@ function createArcade(game, onChange = () => {}) {
     },
   };
 
-  // Sends queued scores for whoever is signed in now; the rest stay queued (another player's, or no connection).
-  // One flush at a time, so a score is never sent twice. Resolves true if a score for this game went up.
-  let flushing = Promise.resolve(false);
+  // Sends the signed-in player's queued scores in one request; the rest stay queued (another player's on this
+  // device). One flush at a time, so a score is never sent twice. `sent` holds the ids that made it up this visit.
+  const sent = new Set();
+  let flushing = Promise.resolve();
   const flush = () => (flushing = flushing.then(async () => {
-    if (!account.user) return false;
-    const queue = local.get('arcade-pending', []), left = [];
-    let posted = false, offline = false;
-    for (const s of queue) {
-      if (offline || s.user !== account.user.id) { left.push(s); continue; }
-      const { error } = await sb.from('scores').insert({ game: s.game, score: s.score, mode: s.mode, seed: s.seed });
-      if (!error) posted ||= s.game === game;
-      else if (!error.code) { offline = true; left.push(s); } // no connection: keep it for next time
-      // an error with a database code means the row itself was refused (it never will be accepted): drop it
-    }
-    local.set('arcade-pending', [...left, ...local.get('arcade-pending', []).slice(queue.length)]); // keep any posted meanwhile
-    return posted;
-  }).catch(() => false));
+    if (!account.user) return;
+    const queue = local.get('arcade-pending', []);
+    const mine = queue.filter(s => s.user === account.user.id), others = queue.filter(s => s.user !== account.user.id);
+    if (!mine.length) return;
+    const { error } = await sb.from('scores').insert(mine.map(({ game, score, mode, seed }) => ({ game, score, mode, seed })));
+    // No connection (no database code): keep them for next time. Refused by the database: they never will be, so drop them.
+    const keep = error && !error.code ? mine : [];
+    local.set('arcade-pending', [...others, ...keep, ...local.get('arcade-pending', []).slice(queue.length)]); // + any queued meanwhile
+    if (!error) mine.forEach(s => sent.add(s.id));
+  }).catch(() => {}));
 
   async function setUser(user) {
     account.user = user;
