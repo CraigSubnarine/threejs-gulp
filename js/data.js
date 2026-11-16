@@ -13,11 +13,14 @@
 const WORLD = { x: 6600, y: 1400 };   // half-width and half-height (a wide sea to explore, about 7 screens across)
 // Rock pillars and arches on the play plane: you and the fish can't swim through them, so prey can be cornered
 // against them (and you can hide behind them). count per level; clear: no obstacles this close to where you start.
-const OBSTACLES = { count: 13, clear: 1400, crackedEvery: 3 }; // every 3rd pillar is cracked: boost into it to smash it
-const VIEW_H = [0, 1280, 1650, 2100]; // how much of the plane the camera shows (height) at your tier 1, 2, 3
+const OBSTACLES = { count: 13, clear: 1400 }; // arches have cracked doors at the bottom of their legs: boost to smash through
+const VIEW_H = [0, 1200, 1500, 1850]; // how much of the plane the camera shows (height) at your tier 1, 2, 3 (× the Zoom setting)
+// The Zoom setting: how much further out (or closer) the camera sits than normal.
+const ZOOM = { close: 0.85, normal: 1, far: 1.2 };
 // tilt: degrees the camera looks down on the sea; sway: degrees it swings round as you swim sideways;
 // lead: seconds of your movement it looks ahead.
-const CAMERA = { tilt: 22, sway: 8, lead: 0.25 };
+// widen: how far it pulls back between levels, × the tier-3 view (then the new level eases out the rest of the way).
+const CAMERA = { tilt: 22, sway: 8, lead: 0.25, widen: 1.2 };
 const LEVEL_SCALE = 200 / 70;                                // a full-grown you (200) is a tier-1 fish (70) one level on
 const fishLen = tier => 70 * LEVEL_SCALE ** ((tier - 1) / 2); // tier -1: 24, 0: 41, 1: 70, 2: 118, 3: 200, 4: 338
 const RANKS_PER_LEVEL = 2;
@@ -61,7 +64,7 @@ const APEX = {
   bitePoints: 150,  // per point of damage
   boostDamage: 2,   // a bite while boosting
   bonus: 3000,      // × the level number, for beating it
-  view: 1.3,        // the camera shows this much more than at tier 3 during the fight
+  view: 1.15,       // the camera shows this much more than at tier 3 during the fight
   toughness: 0.5,   // each time round the zones, apexes get 50% more health
 };
 // lunge: shake, then dash at you; flurry: three quick short lunges; ambush (lair apexes): a hole glows and shakes, it

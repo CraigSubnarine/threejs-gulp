@@ -6,7 +6,7 @@ const store = {
   get(key, fallback) { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } },
   set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} },
 };
-const settings = { sound: true, vibrate: true, cls: 'shark', ...store.get('gulp-settings', {}) };
+const settings = { sound: true, vibrate: true, cls: 'shark', zoom: 'normal', ...store.get('gulp-settings', {}) };
 const saveSettings = () => store.set('gulp-settings', settings);
 const oldBest = store.get('gulp-best', {}); // step 1 saved "depth"; it's "level" now
 let best = { score: oldBest.score ?? 0, level: oldBest.level ?? oldBest.depth ?? 0 };
@@ -326,6 +326,8 @@ $('ui').addEventListener('click', e => {
 $('pauseBtn').addEventListener('click', pauseGame);
 // Boost fires the moment a finger lands (not on release), so it works while the other thumb holds the joystick.
 $('boostBtn').addEventListener('pointerdown', e => { e.preventDefault(); window.game?.boost(); });
+$('zoom').value = settings.zoom; // how far out the camera sits (ZOOM in data.js); takes effect straight away
+$('zoom').addEventListener('change', e => { settings.zoom = e.target.value; saveSettings(); });
 for (const id of ['sound', 'vibrate']) {
   $(id).checked = settings[id];
   $(id).addEventListener('change', e => { settings[id] = e.target.checked; saveSettings(); });

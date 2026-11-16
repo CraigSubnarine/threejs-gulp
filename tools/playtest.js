@@ -104,6 +104,9 @@ async function run(browser, name, options) {
   check(`${name}: settings open`, await visible(page, 'settings'));
   await tap('label:has(#sound)');
   check(`${name}: the sound setting is saved`, await page.evaluate(() => store.get('gulp-settings', {}).sound === false));
+  await page.selectOption('#zoom', 'far');
+  check(`${name}: the Zoom setting is saved`, await page.evaluate(() => store.get('gulp-settings', {}).zoom === 'far'));
+  await page.selectOption('#zoom', 'normal');
   await tap('label:has(#sound)');
   await tap('#settings [data-action=back]');
   check(`${name}: back to the main menu`, await visible(page, 'main'));
@@ -114,7 +117,7 @@ async function run(browser, name, options) {
   const start = await page.evaluate(() => ({ state: app.state, hud: !document.getElementById('hud').hidden, chips: document.querySelectorAll('#chain .chip').length,
     tier: __P().tier, score: game.G.score, level: game.G.level, title: document.getElementById('bannerTitle').textContent, sub: document.getElementById('bannerSub').textContent }));
   check(`${name}: Play starts level 1 at tier 1 with the HUD (one chip per size)`, start.state === 'playing' && start.hud && start.chips === 4 && start.tier === 1 && start.score === 0 && start.level === 1, JSON.stringify(start));
-  check(`${name}: the level card names the zone and the spot`, start.title === 'SUNNY REEF' && start.sub.includes('Coral Garden'), start.sub);
+  check(`${name}: the level card names the zone and the spot, and says this level's shard is hidden here`, start.title === 'SUNNY REEF' && start.sub.includes('Coral Garden') && start.sub.includes('Shard 1 of 5'), start.sub);
   check(`${name}: the food chain bar is green below you, red above`, await page.evaluate(() => __chipsOk()));
   // Nothing can eat you during the checks that aren't about being eaten (they sit still for seconds at a time).
   await page.evaluate(() => { __clear(); __P().safe = 1e6; });
@@ -255,7 +258,7 @@ async function run(browser, name, options) {
     game.render();
     return { n0, left: g.circles.filter(k => k.crack === id).length, hidden: !c.mesh.visible, past: (P.x - (c.x - s * c.r)) * s > 0, why };
   });
-  check(`${name}: boosting into a cracked pillar smashes it, and you go straight through`, smash.n0 > 0 && smash.left === 0 && smash.hidden && smash.past, JSON.stringify(smash));
+  check(`${name}: boosting into an arch's cracked door smashes it, and you go straight through (a shortcut under the arch)`, smash.n0 > 0 && smash.left === 0 && smash.hidden && smash.past, JSON.stringify(smash));
   await shot('02f-smash');
   await page.evaluate(() => { const P = __P(); __clear(); Object.assign(P, { x: 300, y: WORLD.y - 60, vx: 0, vy: 0 }); __step(150); });
   const surface = await page.evaluate(() => { const v = game.camera.position; return { camY: Math.round(v.y) }; });
@@ -407,6 +410,16 @@ async function run(browser, name, options) {
   const z2 = await page.evaluate(() => game.camera.position.z);
   check(`${name}: growing pulls the camera back`, z2 > z1 + 250, `${Math.round(z1)} -> ${Math.round(z2)}`);
   check(`${name}: the food chain bar follows your size`, await page.evaluate(() => __chipsOk()));
+  const zoomed = await page.evaluate(() => {
+    const dist = () => game.cam.dist, z0 = dist();
+    settings.zoom = 'far'; __step(200);
+    const far = dist();
+    settings.zoom = 'close'; __step(200);
+    const close = dist();
+    settings.zoom = 'normal'; __step(200);
+    return { normal: Math.round(z0), far: Math.round(far), close: Math.round(close) };
+  });
+  check(`${name}: Zoom Far shows more of the sea, Close shows less`, zoomed.far > zoomed.normal * 1.12 && zoomed.close < zoomed.normal * 0.9, JSON.stringify(zoomed));
 
   // ---------- Rare variants ----------
   const variants = await page.evaluate(() => {
@@ -495,7 +508,8 @@ async function run(browser, name, options) {
   await page.evaluate(() => __step(1));
   check(`${name}: the clear card shows`, (await page.evaluate(() => document.getElementById('bannerTitle').textContent)) === 'LEVEL CLEAR!');
   const len0 = await page.evaluate(() => __P().len);
-  await page.evaluate(() => { for (let i = 0; i < 400 && app.state === 'playing'; i++) __step(1); });
+  const widest = await page.evaluate(() => { let most = 0; for (let i = 0; i < 400 && app.state === 'playing'; i++) { __step(1); most = Math.max(most, game.cam.dist); } return { most: Math.round(most), limit: Math.round(VIEW_H[3] * CAMERA.widen / 2 / Math.tan(22.5 * Math.PI / 180) * 1.02) }; });
+  check(`${name}: between levels the camera only pulls back a little`, widest.most <= widest.limit, JSON.stringify(widest));
   const widened = await page.evaluate(() => ({ state: app.state, len: __P().len, screen: __onScreen() }));
   check(`${name}: you keep your size while the view widens, then the skill tree opens`, widened.state === 'tree' && Math.abs(widened.len - len0) < 1 && (await visible(page, 'tree')), JSON.stringify({ ...widened, len0 }));
   await shot('06-tree');

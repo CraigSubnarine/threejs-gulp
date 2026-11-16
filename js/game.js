@@ -6,6 +6,7 @@ import { makeFish, makeIcons, makeZone, waterAt, makeWarn, bubbleTexture, water,
 const FOV = 45, DEG = Math.PI / 180, TAN = Math.tan(FOV / 2 * DEG);
 const MAX_ASPECT = 2.3; // a phone held sideways fills its screen; only very wide screens get side bars
 const camDist = viewH => viewH / 2 / TAN; // how far the camera sits from what it looks at to show that much of the plane
+const zoomMul = () => ZOOM[settings.zoom] ?? 1; // the Zoom setting
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const clampMid = (v, a, b) => (a > b ? (a + b) / 2 : clamp(v, a, b)); // if the range is inside out, sit in the middle
 const $ = id => document.getElementById(id);
@@ -19,6 +20,7 @@ renderer.domElement.id = 'view';
 document.body.prepend(renderer.domElement);
 const scene = new THREE.Scene();
 scene.fog = new THREE.Fog(0x4cbfdc, 1000, 5000);
+scene.background = new THREE.Color(0x4cbfdc); // follows the fog, so looking past the backdrop shows water, not black
 const camera = new THREE.PerspectiveCamera(FOV, 1, 50, 14000);
 // The camera looks at a point on the play plane from above and in front (CAMERA.tilt), swung round a little
 // (yaw) as you swim. dist sets how much of the plane it shows.
@@ -1006,6 +1008,8 @@ function apexDefeated(A) {
 }
 
 // ---------- Shards, the orb and the portal ----------
+// The level card's reminder: every level hides its own shard.
+const shardNote = () => (G.shards.has(G.index) ? `◆ You already found this level's shard` : `◇ Shard ${G.index + 1} of ${LEVELS_PER_ZONE} is hidden in a wreck here`);
 // The shard glints once you're close; touch it to take it.
 function updateShard(dt, live) {
   const sh = G.shard;
@@ -1019,7 +1023,7 @@ function updateShard(dt, live) {
     G.shard = null;
     const pts = SHARDS.points * G.level, n = G.shards.size;
     G.score += pts;
-    banner(`SHARD ${n}/${LEVELS_PER_ZONE}`, n >= LEVELS_PER_ZONE ? 'The orb is whole! Beat the apex to open the portal.' : `+${pts.toLocaleString()} · find them all to open the portal`, 2200);
+    banner(`SHARD ${n}/${LEVELS_PER_ZONE}`, n >= LEVELS_PER_ZONE ? 'The orb is whole! Beat the apex to open the portal.' : `+${pts.toLocaleString()} · each level hides one: find all ${LEVELS_PER_ZONE} to open the portal`, 2200);
     burst(sh.x, sh.y, 30, 260);
     jingle([659, 988, 1319, 1760], 80);
     buzz(80);
@@ -1085,12 +1089,13 @@ function nextLevel() {
 function swapLevel() {
   G.level++;
   const len = G.newWorld ? fishLen(1) : P.len / LEVEL_SCALE; // through a portal you start small again
-  cam.dist = G.newWorld ? camDist(VIEW_H[1]) : cam.dist / LEVEL_SCALE; // before startLevel, so the new fish fill the view you'll actually see
+  cam.dist = G.newWorld ? camDist(VIEW_H[1] * zoomMul()) : cam.dist / LEVEL_SCALE; // before startLevel, so the new fish fill the view you'll actually see
   startLevel();
   P.len = len;
   G.phase = 'fadein';
   G.phaseT = FADE_IN_T;
-  banner(G.newWorld ? `WORLD ${G.world + 1}` : G.zone.name.toUpperCase(), `${G.newWorld ? `${G.zone.name} · ` : ''}Level ${G.index + 1}/${LEVELS_PER_ZONE} · ${G.spot.name}`, 2200);
+  banner(G.newWorld ? `WORLD ${G.world + 1}` : G.zone.name.toUpperCase(), `${G.newWorld ? `${G.zone.name} · ` : ''}Level ${G.index + 1}/${LEVELS_PER_ZONE} · ${G.spot.name}
+${shardNote()}`, 2600);
   G.newWorld = false;
   jingle([392, 523, 659], 110);
 }
@@ -1118,7 +1123,9 @@ function update(dt) {
   if (play) updatePickup(dt);
   if (play) { // the camera follows you (looking a little ahead), swings with your swimming and pulls back as you grow
     const k = Math.min(1, dt * 4), widen = G.phase === 'widen' || G.phase === 'fadeout', fight = G.phase === 'apex' || G.phase === 'apexdown';
-    const viewTo = widen ? VIEW_H[1] * LEVEL_SCALE : fight ? VIEW_H[3] * APEX.view : VIEW_H[P.tier];
+    // Between levels it only pulls back a little; after the cut the new level carries on easing out (it's rescaled, so
+    // on screen you stay the same size). The Zoom setting scales every view.
+    const viewTo = (widen ? VIEW_H[3] * CAMERA.widen : fight ? VIEW_H[3] * APEX.view : VIEW_H[P.tier]) * zoomMul();
     cam.dist += (camDist(viewTo) - cam.dist) * Math.min(1, dt * (widen ? 2.6 : 2));
     const hw = (view.x1 - view.x0) / 2, below = cam.y - view.y0, above = view.y1 - cam.y, lim = widen ? Infinity : 1;
     cam.x += (clampMid(P.x + P.vx * CAMERA.lead, -WORLD.x * lim - 100 + hw, WORLD.x * lim + 100 - hw) - cam.x) * k;
@@ -1144,6 +1151,7 @@ function update(dt) {
   if (bannerTimer > 0 && (bannerTimer -= dt) <= 0) $('banner').hidden = true;
   // Water colour and fog follow the camera: lighter near the surface, darker near the floor.
   waterAt(G.water, cam.y, scene.fog.color);
+  scene.background.copy(scene.fog.color);
   scene.fog.near = cam.dist * 1.15; // the bottom of a tilted view is further away than the middle
   scene.fog.far = cam.dist + 3600;
   water.uTime.value = G.t;
@@ -1160,11 +1168,12 @@ function startRun(seed = Math.floor(Math.random() * 1e9), classKey = 'shark') {
   G.stats = computeStats(G.cls.key, G.owned);
   Object.assign(P, { alive: true, gulp: 0, len: fishLen(1), pulse: 0, face: 1, boost: 0, charge: G.stats.boostCharges, ghost: 0, regrowT: 0 });
   P.obj.root.visible = true;
-  cam.dist = camDist(VIEW_H[1]);
+  cam.dist = camDist(VIEW_H[1] * zoomMul());
   shown = {};
   startLevel();
   updateHud();
-  banner(G.zone.name.toUpperCase(), `Level 1/${LEVELS_PER_ZONE} · ${G.spot.name}`, 2200);
+  banner(G.zone.name.toUpperCase(), `Level 1/${LEVELS_PER_ZONE} · ${G.spot.name}
+${shardNote()}`, 2600);
   jingle([392, 523, 659], 110);
 }
 function toMenu() {
@@ -1183,7 +1192,7 @@ function toMenu() {
 let last = 0;
 window.game = {
   manual: false, // the playtest sets this and steps the game itself
-  startRun, toMenu, update, render, spawnFish, speciesAt, boost, nextLevel, buy, spawnPickup, enterWorld, G, camera, icons,
+  startRun, toMenu, update, render, spawnFish, speciesAt, boost, nextLevel, buy, spawnPickup, enterWorld, G, cam, camera, icons,
   get info() { return { score: G.score, level: G.level, world: G.world, shards: G.shards.size, worldPearls: G.worldPearls, zone: G.zone.name, index: G.index, spot: G.spot.name, tier: P.tier, points: G.points, owned: G.owned, stats: G.stats, free: G.cls.free }; },
 };
 addEventListener('resize', resize);

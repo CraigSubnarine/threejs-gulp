@@ -12,6 +12,7 @@ No build step and no asset files: three.js loads from a CDN through an import ma
   - **Computer:** the fish follows the mouse, or use the arrow keys or WASD. Click or press Space to boost.
   - **Boost:** about half a second at 2.3× speed, the way you're steering. The button's ring then refills like a clock over 4 s, and it glows when it's ready (`BOOST` in `data.js`).
   - **Pause:** the top-right button, or Esc / P.
+  - **Zoom:** Settings has Close / Normal / Far for how much of the sea the camera shows (`ZOOM` in `data.js`). Between levels the camera only pulls back a little (`CAMERA.widen`), then the new level eases out the rest of the way.
 - **Status:** two worlds are built, the Sunny Reef and, behind its portal, the Kelp Forest. The reef has:
   - **The sea:** 5 levels in a sea 3× wider than before, with rocks to corner fish against.
   - **Things to find:** oysters with pearls, power-up bubbles, and a shard hidden in a wreck on every level.
@@ -31,7 +32,7 @@ No build step and no asset files: three.js loads from a CDN through an import ma
   - Under the hood, every level is built at the same scale. The game rescales everything by 200/70 behind the fade (one level = two ranks), so the numbers never blow up.
 - **Early growth is quick:** a tiny fish gives 1.75 growth, so about 12 bites to your first size-up. While you're at your smallest, 70% of what spawns is food.
 - **One life:** if a bigger fish catches you, the run is over, unless a skill or a shield saves you.
-- **A wide sea:** about 7 screens across. Rock pillars and arches stand on the play plane: you and the fish can't swim through them, so a fleeing fish can be cornered against one (calm fish swim round them or turn back; panicking ones don't). Every third pillar is **cracked** (sandy and blotchy): boost into it and the whole pillar smashes.
+- **A wide sea:** about 7 screens across. Rock pillars and arches stand on the play plane: you and the fish can't swim through them, so a fleeing fish can be cornered against one (calm fish swim round them or turn back; panicking ones don't). Arches are tall (never two in a row), and the bottom of each leg is a **cracked door** (sandy and blotchy): boost into it to smash through and cut straight under the arch, instead of swimming over the top.
 - **Oysters** (2 per level) sit on the sea floor:
   - **The cycle:** each one opens to show a pearl, shivers, then snaps shut.
   - **Pearls:** a white pearl is worth 500 × the level and a black one 2,500 × the level.
@@ -43,7 +44,7 @@ No build step and no asset files: three.js loads from a CDN through an import ma
   - **Rush:** you swim 50% faster.
   - **Bubble Shield:** you survive the next bite.
 - **Shards and the portal:**
-  - **Finding them:** each level hides a shard in a wreck, out in the wide sea (a different place each run). It glints once you're close.
+  - **Finding them:** each level hides *its own* shard (the level card says which, e.g. "Shard 2 of 5 is hidden in a wreck here") in a wreck, out in the wide sea (a different place each run). It glints once you're close.
   - **With all five:** they make an orb, and beating the world's apex opens a **portal** to another world's ocean (the reef's portal leads to the Kelp Forest; after the last built world they loop round, recoloured and faster).
   - **Keeping skills:** at the portal you keep 1 skill, plus 1 per 10 pearls found in that world (up to 3). Your size, tree and shards start over.
   - **Missing shards:** the portal stays dark and the world replays, faster, keeping the shards you found.

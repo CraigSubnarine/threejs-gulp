@@ -35,6 +35,7 @@
   a { color: var(--deep); padding: 8px; font-weight: 800; }
   .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 48px; padding: 0 14px; background: var(--btn); border-radius: 14px; cursor: pointer; }
   .row input[type=checkbox] { width: 22px; height: 22px; accent-color: var(--orange); }
+  .row select { font: inherit; font-weight: 800; min-height: 36px; padding: 0 8px; border-radius: 10px; border: 2px solid var(--line); background: #fff; color: var(--text); }
   .hint { font-size: .9rem; text-align: left; }
   .big { font-size: 1.4rem; color: var(--text) !important; font-weight: 800; }
 
@@ -62,7 +63,7 @@
   #meter s { position: absolute; top: 0; bottom: 0; width: 2px; background: rgb(255 255 255 / .8); }
   #banner { position: fixed; z-index: 1; left: 0; right: 0; top: 34%; display: flex; flex-direction: column; align-items: center; pointer-events: none; color: #fff; text-align: center; animation: pop .35s ease-out; }
   #bannerTitle { font-family: "Lilita One", sans-serif; font-size: 2.6rem; font-weight: 400; color: #ffe066; text-shadow: 0 4px 0 var(--deep), 0 6px 14px rgb(0 0 0 / .35); }
-  #bannerSub { font-weight: 800; text-shadow: 0 2px 4px rgb(0 0 0 / .5); padding: 0 16px; }
+  #bannerSub { white-space: pre-line; font-weight: 800; text-shadow: 0 2px 4px rgb(0 0 0 / .5); padding: 0 16px; }
   @keyframes pop { from { transform: scale(.6); opacity: 0; } }
   #pops { position: fixed; inset: 0; z-index: 1; pointer-events: none; overflow: hidden; }
   .pop { position: absolute; transform: translate(-50%, -50%); font-family: "Lilita One", sans-serif; color: #fff; font-size: 1.2rem; text-shadow: 0 2px 0 rgb(0 30 50 / .6); animation: rise .8s ease-out forwards; }
@@ -196,7 +197,7 @@
 </head>
 <body>
 <div id="hud" hidden>
-  <div class="top"><span id="score">0</span><span id="combo"></span><span id="where"><b id="whereName"></b><small id="pearls" title="Pearls towards your next bonus skill point"></small></span></div>
+  <div class="top"><span id="score">0</span><span id="combo"></span><span id="where"><b id="whereName"></b><small id="pearls" title="Pearls towards your next bonus skill point, then this world's 5 shards (one hidden in each level)"></small></span></div>
   <div id="chain"></div>
   <div id="meterRow"><div id="meter"><i id="meterFill"></i><s style="left:33.3%"></s><s style="left:66.6%"></s></div></div>
   <div id="boss" hidden><span id="bossName"></span><div id="bossBar"><i id="bossFill"></i></div></div>
@@ -224,11 +225,12 @@
     <h2>SETTINGS</h2>
     <label class="row">Sound <input type="checkbox" id="sound"></label>
     <label class="row">Vibration <input type="checkbox" id="vibrate"></label>
+    <label class="row">Zoom <select id="zoom"><option value="close">Close</option><option value="normal">Normal</option><option value="far">Far</option></select></label>
     <p class="hint"><b>Phone:</b> touch anywhere and drag, like a joystick. The further you drag, the faster you swim. Tap <b>BOOST</b> (bottom right) for a burst of speed; it takes a few seconds to recharge. <b>Computer:</b> your fish follows the mouse, or use the arrow keys or WASD. Click or press Space to boost.</p>
     <p class="hint">The bar at the top shows what you can eat (green) and what can eat you (red). Eat to fill your meter: you grow at each mark, and a full meter clears the level. One bite from a bigger fish and the run is over.</p>
     <p class="hint"><b>Oysters</b> on the sea floor open to show a pearl: grab it before the shell snaps shut (while you're small, the snap eats you). Every 5 pearls give a bonus skill point. <b>Cracked</b> (sandy) rock pillars smash if you boost into them. <b>Bubbles</b> drifting down hold power-ups: Shock, Shrink, Rush and Bubble Shield.</p>
     <p class="hint">In the <b>Kelp Forest</b> (behind the reef's portal), <b>jellyfish</b> drift about: you can never eat them, and touching one stings (you're stunned for a moment). They're on the pink chip at the end of the food chain bar.</p>
-    <p class="hint">Each level hides a <b>shard</b> in a wreck out in the wide sea. Find all five before the apex and they make an orb that opens a <b>portal</b> to another world's ocean: you start small again but keep some skills. Miss one and the world starts over, faster.</p>
+    <p class="hint">Each level hides its own <b>shard</b> in a wreck out in the wide sea (the ◆ row on the HUD shows which you've found). Find all five before the apex and they make an orb that opens a <b>portal</b> to another world's ocean: you start small again but keep some skills. Miss one and the world starts over, faster.</p>
     <p class="hint">At the end of a zone its <b>apex predator</b> shows up. Bite its <b>tail</b> (boost into it for a double bite) and stay away from its <b>jaws</b>. When it shakes and a red "!" appears, it's about to lunge; right after a lunge it slows down, so that's your chance.</p>
     <button data-action="back">Back</button>
   </section>

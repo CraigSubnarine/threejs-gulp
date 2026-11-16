@@ -428,8 +428,8 @@ function landmark(kind, geos, R, base, rand, CORAL) {
   }
 }
 
-// Cracked rock: sandy, two-tone and blotchy, so it reads as "breakable". Each one is its own mesh (not merged), so
-// it can vanish when you smash it.
+// Cracked rock: sandy, two-tone and blotchy, so it reads as "breakable". An arch door's cracked rocks are merged into
+// a mesh of their own (not with the other scenery), so the door can vanish when you smash it.
 const crackedMat = caustics(new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.95 }), 0.4);
 function crackedGeometry(rand) {
   const g = new THREE.DodecahedronGeometry(1, 0).toNonIndexed(), n = g.attributes.position.count, col = new Float32Array(n * 3), c = new THREE.Color();
@@ -442,40 +442,43 @@ function crackedGeometry(rand) {
   return g;
 }
 
-// Obstacles on the play plane (z = 0): rock pillars rising from the floor and arches you can swim under. Each rock
-// is also a collision circle (x, y, r) that you and the fish can't pass through. None near where you start.
-// Some pillars are cracked (every OBSTACLES.crackedEvery-th): boost into one and the whole pillar crumbles. Their circles carry
-// crack (the pillar's id) and mesh.
+// Obstacles on the play plane (z = 0): rock pillars rising from the floor, and tall arches (never two in a row).
+// Each rock is also a collision circle (x, y, r) that you and the fish can't pass through. None near where you start.
+// The bottom of each arch leg is a cracked door: boost into it and it smashes, so you can cut straight under the arch
+// instead of swimming over the top (a shortcut). A door's circles carry crack (its id) and mesh (its merged rocks).
 function obstacles(geos, R, rand, CORAL, clear = [], group) {
   const circles = [], floor = -WORLD.y - 50, half = WORLD.x - 300, n = OBSTACLES.count;
-  let pillars = 0;
+  let lastArch = false;
   const rock = (x, y, r, k) => {
     geos.push(colored(new THREE.DodecahedronGeometry(1, 0), k % 2 ? 0x75899a : 0x667b8c, M(x, y, 0, R(0, 3), R(0, 3), R(0, 3), r, r * 0.92, r * 0.8)));
     circles.push({ x, y, r: r * 0.9 });
   };
   const cap = (x, y, r) => geos.push(colored(new THREE.IcosahedronGeometry(1, 1), CORAL[Math.floor(rand() * CORAL.length)], M(x, y, 0, 0, R(0, 3), 0, r, r * 0.5, r * 0.7)));
   for (let i = 0; i < n; i++) {
-    let x = -half + (i + 0.5) * 2 * half / n + R(-250, 250);
+    const x = -half + (i + 0.5) * 2 * half / n + R(-250, 250), roll = rand();
     if (Math.abs(x) < OBSTACLES.clear) continue; // open water where you start (moving these aside piled them on top of each other)
-    if (clear.some(c => Math.abs(x - c) < 1500)) continue; // room for the level's wreck
-    if (rand() < 0.65) { // a pillar: a stack of rocks getting smaller towards the top
+    if (clear.some(c => Math.abs(x - c) < 1500)) continue; // room for the level's wreck (and lair)
+    const arch = roll >= 0.65 && !lastArch; // arches side by side looked like a wall of rings
+    lastArch = arch;
+    if (!arch) { // a pillar: a stack of rocks getting smaller towards the top
       let y = floor, r = R(150, 240);
-      const cracked = pillars++ % OBSTACLES.crackedEvery === 0; // every few pillars, so each level has some
       for (let k = 0, h = 3 + Math.floor(rand() * 6); k < h; k++, r *= R(0.8, 0.9)) { // 3-8 rocks: some reach mid-water
         y += k ? r * 1.5 : r * 0.6;
-        const rx = x + R(-30, 30);
-        if (!cracked) { rock(rx, y, r, k); continue; }
-        const mesh = new THREE.Mesh(crackedGeometry(rand), crackedMat);
-        mesh.position.set(rx, y, 0);
-        mesh.rotation.set(R(0, 3), R(0, 3), R(0, 3));
-        mesh.scale.set(r, r * 0.92, r * 0.8);
-        group.add(mesh);
-        circles.push({ x: rx, y, r: r * 0.9, crack: i, mesh });
+        rock(x + R(-30, 30), y, r, k);
       }
-      if (!cracked && rand() < 0.6) cap(x, y + r * 0.8, r * 1.1);
-    } else { // an arch: two legs and a curved top, with a gap underneath to swim through
-      const w = R(380, 600), h = R(900, 1500), r = R(100, 140);
-      for (const side of [-1, 1]) for (let y = floor + r * 0.5; y < floor + h - r; y += r * 1.4) rock(x + side * w, y, r, Math.round(y));
+      if (rand() < 0.6) cap(x, y + r * 0.8, r * 1.1);
+    } else { // a tall arch: going over the top is a long way round, smashing through its doors is the shortcut
+      const w = R(380, 600), h = R(1150, 1700), r = R(100, 140), doorTop = floor + Math.min(h * 0.45, 640);
+      for (const side of [-1, 1]) {
+        const door = [], id = `${i}/${side}`;
+        for (let y = floor + r * 0.5; y < floor + h - r; y += r * 1.4) {
+          if (y < doorTop) door.push(y);
+          else rock(x + side * w, y, r, Math.round(y));
+        }
+        const mesh = new THREE.Mesh(mergeGeometries(door.map(y => crackedGeometry(rand).applyMatrix4(M(x + side * w, y, 0, R(0, 3), R(0, 3), R(0, 3), r * 1.05, r, r * 0.85)))), crackedMat);
+        group.add(mesh);
+        for (const y of door) circles.push({ x: x + side * w, y, r: r * 0.9, crack: id, mesh });
+      }
       for (let k = 0; k <= 8; k++) {
         const a = Math.PI * k / 8;
         rock(x - Math.cos(a) * w, floor + h - r + Math.sin(a) * r * 2.2, r, k);
