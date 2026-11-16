@@ -10,7 +10,8 @@ const SHAPES = {
   fat: { h: 0.5, w: 0.36, head: 0.25 },
   long: { h: 0.16, w: 0.13 },
   round: { h: 0.72, w: 0.66 },
-  torpedo: { h: 0.24, w: 0.19 }, // apexes like the Barracuda: long but with some bulk
+  torpedo: { h: 0.24, w: 0.19 }, // sharks and apexes like the Barracuda: long but with some bulk
+  eel: { h: 0.11, w: 0.09 },     // morays, sawfish, oarfish
 };
 // ---------- Caustics: the rippling sunlight patterns that play over everything underwater ----------
 // Added to three.js's standard material with onBeforeCompile: the fragment shader gets a cheap animated pattern from

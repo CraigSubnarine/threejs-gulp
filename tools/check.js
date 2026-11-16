@@ -5,11 +5,11 @@ const vm = require('vm');
 
 // Load the plain scripts the way the page does: in order, sharing globals.
 for (const f of ['data.js', 'rules.js']) vm.runInThisContext(fs.readFileSync(path.join(__dirname, '..', 'js', f), 'utf8'), { filename: f });
-const names = ['ZONES', 'METER_NEED', 'SCORE', 'COMBO_MAX', 'COMBO_GAP', 'TUNING', 'SKILLS', 'COMBOS', 'CLASSES', 'VARIANTS', 'VARIANT_CHANCE', 'LEVELS_PER_ZONE', 'FISH_LEN', 'LEVEL_SCALE',
-  'canEat', 'tierFor', 'scoreFor', 'speedAt', 'makeSpawner', 'hashSeed', 'levelInfo', 'nodeId', 'nodeCost', 'canBuy', 'combosFor', 'computeStats', 'classUnlocked'];
+const names = ['ZONES', 'METER_NEED', 'GROW', 'COMBO_MAX', 'COMBO_GAP', 'TUNING', 'SKILLS', 'COMBOS', 'CLASSES', 'VARIANTS', 'VARIANT_CHANCE', 'LEVELS_PER_ZONE', 'RANKS_PER_LEVEL', 'LEVEL_SCALE',
+  'fishLen', 'canEat', 'tierFor', 'pointsFor', 'scoreFor', 'speedAt', 'makeSpawner', 'levelFish', 'hashSeed', 'levelInfo', 'nodeId', 'nodeCost', 'canBuy', 'combosFor', 'computeStats', 'classUnlocked'];
 const G = Object.fromEntries(names.map(n => [n, vm.runInThisContext(n)]));
-const { ZONES, METER_NEED, SCORE, COMBO_MAX, COMBO_GAP, TUNING, SKILLS, COMBOS, CLASSES, VARIANTS, VARIANT_CHANCE, LEVELS_PER_ZONE, FISH_LEN, LEVEL_SCALE,
-  canEat, tierFor, scoreFor, speedAt, makeSpawner, hashSeed, levelInfo, nodeId, nodeCost, canBuy, combosFor, computeStats, classUnlocked } = G;
+const { ZONES, METER_NEED, GROW, COMBO_MAX, COMBO_GAP, TUNING, SKILLS, COMBOS, CLASSES, VARIANTS, VARIANT_CHANCE, LEVELS_PER_ZONE, RANKS_PER_LEVEL, LEVEL_SCALE,
+  fishLen, canEat, tierFor, pointsFor, scoreFor, speedAt, makeSpawner, levelFish, hashSeed, levelInfo, nodeId, nodeCost, canBuy, combosFor, computeStats, classUnlocked } = G;
 
 let failed = 0;
 const check = (name, ok, detail = '') => {
@@ -18,7 +18,7 @@ const check = (name, ok, detail = '') => {
 };
 
 // ---------- Who eats whom ----------
-check('a bigger tier eats a smaller one', canEat({ tier: 2 }, { tier: 1 }) && canEat({ tier: 3 }, { tier: 0 }));
+check('a bigger tier eats a smaller one', canEat({ tier: 2 }, { tier: 1 }) && canEat({ tier: 3 }, { tier: 0 }) && canEat({ tier: 1 }, { tier: -1 }));
 check('a smaller tier never eats a bigger one', !canEat({ tier: 1 }, { tier: 2 }));
 check('the same tier just bumps', !canEat({ tier: 2 }, { tier: 2 }));
 
@@ -26,23 +26,40 @@ check('the same tier just bumps', !canEat({ tier: 2 }, { tier: 2 }));
 check('you start at tier 1', tierFor(0) === 1);
 check('tier 2 at a third of the meter', tierFor(METER_NEED / 3 - 0.01) === 1 && tierFor(METER_NEED / 3) === 2);
 check('tier 3 at two thirds', tierFor(METER_NEED * 2 / 3 - 0.01) === 2 && tierFor(METER_NEED * 2 / 3) === 3 && tierFor(METER_NEED) === 3);
-check('a full-grown you is exactly a tier-1 fish one level on', Math.abs(FISH_LEN[3] / LEVEL_SCALE - FISH_LEN[1]) < 1e-9);
+check('a full-grown you is exactly a tier-1 fish one level on', Math.abs(fishLen(3) / LEVEL_SCALE - fishLen(1)) < 1e-9 && Math.abs(fishLen(1) - 70) < 1e-9);
+check('one level up the ladder is two tiers', Math.abs(fishLen(2) / LEVEL_SCALE - fishLen(0)) < 1e-9 && Math.abs(fishLen(1) / LEVEL_SCALE - fishLen(-1)) < 1e-9);
+const firstGrow = Math.ceil(METER_NEED / 3 / GROW[0]);
+check('early growth is quick: about 12 tiny fish to your first size-up', firstGrow <= 13, `${firstGrow} bites`);
+check('bigger fish are more filling', GROW[-1] < GROW[0] && GROW[0] < GROW[1] && GROW[1] < GROW[2] && GROW[2] < GROW[3]);
 
 // ---------- Score ----------
-check('a combo multiplies the points', scoreFor(1, 3) === SCORE[1] * 3 && scoreFor(2, 1) === SCORE[2]);
-check('the combo is capped', scoreFor(0, 99) === SCORE[0] * COMBO_MAX && scoreFor(0, 0) === SCORE[0]);
+check('a combo multiplies the points', scoreFor(1, 3) === pointsFor(1) * 3 && scoreFor(2, 1) === pointsFor(2));
+check('the combo is capped', scoreFor(0, 99) === pointsFor(0) * COMBO_MAX && scoreFor(0, 0) === pointsFor(0));
+check('fish higher up the ladder are worth more', pointsFor(0) === 10 && [...Array(11).keys()].every(r => pointsFor(r + 1) > pointsFor(r)));
 check('fish get faster each level', speedAt(1) === 1 && speedAt(3) > speedAt(2));
 
-// ---------- Zones and levels ----------
+// ---------- Zones, levels and the size ladder ----------
 for (const z of ZONES) {
-  const tiers = new Set(z.fish.filter(f => f.behavior !== 'puff').map(f => f.tier));
-  check(`${z.name}: has a fish in every tier 0-3`, [0, 1, 2, 3].every(t => tiers.has(t)));
-  check(`${z.name}: at least 7 species`, z.fish.length >= 7, String(z.fish.length));
+  const top = RANKS_PER_LEVEL * (LEVELS_PER_ZONE - 1) + 3, ranks = new Set(z.fish.filter(f => f.behavior !== 'puff').map(f => f.rank));
+  const missing = [...Array(top + 1).keys()].filter(r => !ranks.has(r));
+  check(`${z.name}: has a species at every rank 0-${top}`, !missing.length, missing.join());
   check(`${z.name}: species keys are unique`, new Set(z.fish.map(f => f.key)).size === z.fish.length);
   check(`${z.name}: ${LEVELS_PER_ZONE} levels, each with its own name and landmark`, z.levels.length === LEVELS_PER_ZONE
     && new Set(z.levels.map(l => l.name)).size === LEVELS_PER_ZONE && new Set(z.levels.map(l => l.landmark)).size === LEVELS_PER_ZONE);
   const keys = new Set(z.fish.map(f => f.key)), bad = z.levels.flatMap(l => Object.keys(l.mix ?? {}).filter(k => !keys.has(k)));
   check(`${z.name}: level fish mixes only name the zone's fish`, !bad.length, bad.join());
+  for (let i = 0; i < LEVELS_PER_ZONE; i++) {
+    const fish = levelFish(z, i), at = t => fish.filter(f => f.tier === t && f.behavior !== 'puff');
+    check(`${z.name} level ${i + 1}: food to start on, your size, and bigger fish including a hunter`, at(0).length && at(1).length && at(2).length && at(3).length
+      && fish.some(f => f.tier >= 2 && f.behavior === 'hunter') && fish.every(f => f.tier >= -1 && f.tier <= 3), fish.map(f => `${f.key}:${f.tier}`).join(' '));
+    if (i === 0) continue;
+    // Keep your size: what you could eat at the end of the last level (its tiers 1-2) is still here and still
+    // food; and new bigger fish join on top.
+    const before = levelFish(z, i - 1), still = before.filter(f => f.tier >= 1 && f.tier <= 2);
+    const kept = still.every(f => fish.some(g => g.key === f.key && g.tier < 1));
+    const fresh = fish.filter(g => g.tier >= 2 && !before.some(f => f.key === g.key));
+    check(`${z.name} level ${i + 1}: the fish you could eat are still food, plus new bigger ones`, kept && fresh.length >= 2, `new: ${fresh.map(f => f.name).join(', ')}`);
+  }
 }
 const l1 = levelInfo(1), l5 = levelInfo(5), l6 = levelInfo(6);
 check('levels 1-5 are the first zone in order, level 6 starts the next zone', l1.index === 0 && l5.index === 4 && l5.zone === ZONES[0] && l6.index === 0
@@ -56,9 +73,13 @@ const sig = list => list.map(x => `${x.species.key}${x.fromLeft ? 'L' : 'R'}${x.
 check('the same seed gives the same spawns (and variants)', sig(a) === sig(b));
 check('a different seed gives different spawns', sig(a) !== sig(c));
 for (const tier of [1, 2, 3]) {
-  const s = makeSpawner(1, reef), list = Array.from({ length: 3000 }, () => s.next(tier));
+  const s = makeSpawner(1, reef), list = Array.from({ length: 3000 }, () => s.next(tier)), want = tier <= 1 ? TUNING.edibleSmall : TUNING.edibleShare;
   const share = list.filter(x => x.species.tier < tier && x.species.behavior !== 'puff').length / list.length;
-  check(`at tier ${tier}, about ${TUNING.edibleShare * 100}% of spawns are food`, Math.abs(share - TUNING.edibleShare) < 0.05, share.toFixed(2));
+  check(`at tier ${tier}, about ${Math.round(want * 100)}% of spawns are food`, Math.abs(share - want) < 0.05, share.toFixed(2));
+}
+{
+  const s = makeSpawner(3, reef, reef.levels[2], 2), list = Array.from({ length: 2000 }, () => s.next(1));
+  check('a level only spawns its window of the ladder (level 3: ranks 3-7, tiers -1 to 3)', list.every(x => x.species.rank >= 3 && x.species.rank <= 7 && x.species.tier === x.species.rank - 4));
 }
 check('schools come in groups', a.filter(x => x.species.group && !x.variant).every(x => x.count >= x.species.group[0] && x.count <= x.species.group[1]));
 {
@@ -68,9 +89,8 @@ check('schools come in groups', a.filter(x => x.species.group && !x.variant).eve
   check('puffers and tier-3 fish never get spiny/speedy', list.every(x => !x.variant || (x.species.behavior !== 'puff' && (x.species.tier < 3 || ['golden', 'giant'].includes(x.variant)))));
   const s2 = makeSpawner(5, reef), more = Array.from({ length: 5000 }, () => s2.next(2, 2.5)).filter(x => x.variant).length / 5000;
   check('Treasure Nose makes rare fish more common', more > share * 2, more.toFixed(3));
-  const sand = makeSpawner(9, reef, reef.levels[1]), garden = makeSpawner(9, reef, reef.levels[0]);
-  const gobies = sp => Array.from({ length: 3000 }, () => sp.next(1)).filter(x => x.species.key === 'goby').length;
-  check('a level\'s fish mix changes what shows up (more gobies in the Sandy Shallows)', gobies(sand) > gobies(garden) * 1.3);
+  const jacks = sp => Array.from({ length: 3000 }, () => sp.next(1)).filter(x => x.species.key === 'jack').length;
+  check('a level\'s fish mix changes what shows up (more jacks in the Sandy Shallows)', jacks(makeSpawner(9, reef, reef.levels[1], 1)) > jacks(makeSpawner(9, reef, {}, 1)) * 1.3);
 }
 
 // ---------- Apex predators ----------

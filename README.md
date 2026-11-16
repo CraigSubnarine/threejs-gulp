@@ -19,8 +19,10 @@ No build step and no asset files: three.js loads from a CDN through an import ma
 - **The food chain:** every fish has a tier, from 0 (tiny fry) to 3. You start each level at tier 1. You can eat fish below your tier, fish above it eat you, and fish at your tier just bump into you.
   - The bar at the top shows each of the zone's fish: green means food, red means danger.
 - **Growing:** eating fills your meter. You grow a tier at each third, and the camera pulls back so you can see more. A full meter clears the level.
-- **Keeping your size:** when a level clears, the camera pulls back while you stay the same size, so the view widens. Then the next level fades in. You're a tier-1 fish there, and its fish are bigger than the last level's, so you're back in the middle of the food chain.
-  - Under the hood, every level is built at the same scale. The game rescales everything by 200/70 behind the fade, so the numbers never blow up.
+- **Keeping your size (the size ladder):** every species in a zone has a size rank, from minnows (0) up to bull sharks (11). Each level shows a window of the ladder, two ranks higher than the level before.
+  - When a level clears, the camera pulls back while you stay the same size. The fish you could eat at the end are still there in the next level and still food: the parrotfish you outgrew in level 1 are snacks in level 2. New bigger species join on top that you can't eat yet, and the tiniest drop out.
+  - Under the hood, every level is built at the same scale. The game rescales everything by 200/70 behind the fade (one level = two ranks), so the numbers never blow up.
+- **Early growth is quick:** a tiny fish gives 1.75 growth, so about 12 bites to your first size-up. While you're at your smallest, 70% of what spawns is food.
 - **One life:** if a bigger fish catches you, the run is over, unless a skill saves you.
 - **Combos:** eats less than 1.5 s apart multiply the points (up to ×8).
 - **The Sunny Reef** has 5 levels, each its own spot with its own colours, prop mix, fish mix and a landmark built in code:
@@ -38,14 +40,18 @@ No build step and no asset files: three.js loads from a CDN through an import ma
   - **Phase 2:** at half health it gets angry (a new taunt), moves faster and adds a flurry of three quick lunges.
   - **Beating it** pays 3,000 × the level, plus a bonus skill point.
   - It's data plus an attack library (`apex` in `data.js`, `APEX_ATTACKS`): each later zone's apex is a model, some numbers and a list of attacks per phase.
-- **The reef's fish:**
-  - **Food:** minnows (schools that dart away) and gobies.
-  - **Your size at first:** butterflyfish and damselfish.
-  - **Puffers:** they swell into a danger when you're close.
-  - **Bigger:** parrotfish, and triggerfish, which hunt you.
-  - **Biggest:** groupers (hunters) and snappers.
+- **The reef's fish (25 species, smallest first):**
 
-  A red "!" means a hunter is chasing you; it gives up after a few seconds.
+  | Ranks | Species |
+  |---|---|
+  | 0-1 | minnows, gobies, butterflyfish, damselfish, pufferfish (they swell into a danger when you're close) |
+  | 2-3 | parrotfish, triggerfish, groupers, snappers |
+  | 4-5 | angelfish, moray eels, wrasse, jacks |
+  | 6-7 | reef sharks, tarpon, goliath groupers, bumpheads |
+  | 8-9 | giant trevally, humphead wrasse, tiger sharks, sunfish |
+  | 10-11 | whale sharks, sawfish, bull sharks, oarfish |
+
+  Every level has at least one hunter bigger than you. A red "!" means one is chasing you; it gives up after a few seconds.
 - **Rare variants (8%):**
 
   | Variant | Effect |

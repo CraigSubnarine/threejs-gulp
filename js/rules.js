@@ -25,8 +25,20 @@ const canEat = (eater, food) => eater.tier > food.tier;
 // Your tier from the meter: 1 to start, 2 at a third, 3 at two thirds.
 const tierFor = meter => meter >= METER_NEED * 2 / 3 ? 3 : meter >= METER_NEED / 3 ? 2 : 1;
 
-// Points for one fish: its tier's points times the combo (capped).
-const scoreFor = (tier, combo) => SCORE[tier] * Math.min(Math.max(combo, 1), COMBO_MAX);
+// Points for one fish come from its size rank (bigger is worth more, all the way up the ladder), times the combo.
+const pointsFor = rank => Math.round(10 * 1.6 ** rank);
+const scoreFor = (rank, combo, comboMax = COMBO_MAX) => pointsFor(rank) * Math.min(Math.max(combo, 1), comboMax);
+
+// The size ladder: the zone's fish that show up on a level (index 0-4 in its zone), each with its tier there
+// (rank minus two per level). The window keeps the ranks just below you as food and adds bigger ones on top.
+const ladderCache = new Map();
+function levelFish(zone, index) {
+  const key = `${zone.key}/${index}`, base = RANKS_PER_LEVEL * index;
+  if (!ladderCache.has(key)) ladderCache.set(key, zone.fish.filter(f => f.rank >= base - 1 && f.rank <= base + 3).map(f => atLevel(f, index)));
+  return ladderCache.get(key);
+}
+// One species as it is on a level: its tier there, and how big a puffer gets when it puffs up.
+const atLevel = (f, index) => ({ ...f, tier: f.rank - RANKS_PER_LEVEL * index, puffTo: f.puffBy && f.rank - RANKS_PER_LEVEL * index + f.puffBy });
 
 // The fish speed multiplier at a level (later levels are faster).
 const speedAt = level => 1 + TUNING.harder * (level - 1);
@@ -39,9 +51,10 @@ function levelInfo(level) {
 }
 
 // The spawner: which fish comes next, from where, and whether it's a rare variant. Its own seeded generator, so
-// a seed always gives the same sea; how fish then behave is left to Math.random. spot.mix weights this level's fish.
-function makeSpawner(seed, zone, spot = {}) {
-  const rand = mulberry32(seed), w = f => f.weight * (spot.mix?.[f.key] ?? 1);
+// a seed always gives the same sea; how fish then behave is left to Math.random. It picks from the level's window
+// of the size ladder (index: the level within its zone), and spot.mix weights this level's fish.
+function makeSpawner(seed, zone, spot = {}, index = 0) {
+  const rand = mulberry32(seed), fish = levelFish(zone, index), w = f => f.weight * (spot.mix?.[f.key] ?? 1);
   const pick = list => {
     const total = list.reduce((a, f) => a + w(f), 0);
     let r = rand() * total;
@@ -50,12 +63,13 @@ function makeSpawner(seed, zone, spot = {}) {
   };
   return {
     rand,
-    // playerTier decides what's food: about TUNING.edibleShare of spawns are fish you can eat right now.
-    // variantMul: Treasure Nose makes rare fish more common.
+    // playerTier decides what's food: about TUNING.edibleShare of spawns are fish you can eat right now (a bit
+    // more while you're at your smallest). variantMul: Treasure Nose makes rare fish more common.
     next(playerTier, variantMul = 1) {
-      const food = zone.fish.filter(f => f.tier < playerTier && f.behavior !== 'puff');
-      const rest = zone.fish.filter(f => !food.includes(f));
-      const species = food.length && rand() < TUNING.edibleShare ? pick(food) : pick(rest);
+      const food = fish.filter(f => f.tier < playerTier && f.behavior !== 'puff');
+      const rest = fish.filter(f => !food.includes(f));
+      const share = playerTier <= 1 ? TUNING.edibleSmall : TUNING.edibleShare;
+      const species = food.length && rand() < share ? pick(food) : pick(rest);
       const fromLeft = rand() < 0.5;
       const count = species.group ? species.group[0] + Math.floor(rand() * (species.group[1] - species.group[0] + 1)) : 1;
       let variant = null;

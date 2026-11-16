@@ -117,7 +117,7 @@ function popup(text, x, y, kind = '') {
 // a zone has. Green chips are food, red ones can eat you.
 function buildChain() {
   $('chain').replaceChildren(...[0, 1, 2, 3].map(t => {
-    const list = G.zone.fish.filter(s => s.tier === t), chip = document.createElement('div');
+    const list = G.levelFish.filter(s => s.tier === t), chip = document.createElement('div');
     chip.dataset.tier = t;
     chip.title = list.map(s => (s.behavior === 'puff' ? `${s.name} (puffs up when you get close)` : s.name)).join(', ');
     chip.innerHTML = list.map(s => `<img src="${icons[s.key]}" alt="">`).join('') + `<i>${t}</i>`; // game data only
@@ -164,7 +164,7 @@ function updateHud() {
 const G = { mode: 'menu', phase: 'swim', level: 1, zone: null, index: 0, spot: null, scenery: null, seed: 0, spawner: null, fish: [], t: 0,
   spawnT: 0, phaseT: 0, score: 0, combo: 0, comboT: 0, meter: 0, eatenBy: '', points: 0, owned: [], cls: CLASSES[0], stats: computeStats('scamp', []), windUsed: 0 };
 
-const P = { obj: null, x: 0, y: 0, vx: 0, vy: 0, len: FISH_LEN[1], tier: 1, face: 1, pulse: 0, safe: 0, alive: false, phase: 0, gulp: 0, boost: 0, charge: 1,
+const P = { obj: null, x: 0, y: 0, vx: 0, vy: 0, len: fishLen(1), tier: 1, face: 1, pulse: 0, safe: 0, alive: false, phase: 0, gulp: 0, boost: 0, charge: 1,
   stun: 0, shields: 0, gulps: 0 };
 G.player = P;
 function setClass(cls) { // a different kind of fish: a new model
@@ -188,9 +188,10 @@ function startLevel() {
   hemi.color.set(G.zone.sky);
   hemi.groundColor.set(G.zone.ground);
   sun.intensity = G.zone.sun;
+  G.levelFish = levelFish(G.zone, G.index); // this level's window of the size ladder, each with its tier here
   buildChain();
   clearFish();
-  G.spawner = makeSpawner(hashSeed(`${G.seed}/${G.level}`), G.zone, G.spot);
+  G.spawner = makeSpawner(hashSeed(`${G.seed}/${G.level}`), G.zone, G.spot, G.index);
   G.meter = 0;
   G.phase = 'swim';
   G.spawnT = 0;
@@ -214,10 +215,12 @@ function removeFish(f) {
   G.fish.splice(G.fish.indexOf(f), 1);
 }
 
+// A species as it is on this level (with its tier here), by key. It also works for fish outside the level's window.
+const speciesAt = key => G.levelFish.find(s => s.key === key) ?? atLevel(G.zone.fish.find(s => s.key === key), G.index);
 const yawFor = face => (face > 0 ? -0.35 : -Math.PI + 0.35); // turned a little towards the camera, so you see 3D
 function spawnFish(species, x, y, dir, variant = null) {
   const tier = species.tier + (variant === 'giant' ? VARIANTS.giant.tier : 0);
-  const f = { s: species, variant, tier, x, y, vx: dir * species.speed, vy: 0, dir, face: dir, len: FISH_LEN[tier] * (species.behavior === 'puff' ? 0.9 : 1),
+  const f = { s: species, variant, tier, x, y, vx: dir * species.speed, vy: 0, dir, face: dir, len: fishLen(tier) * (species.behavior === 'puff' ? 0.9 : 1),
     obj: makeFish(species, variant), phase: Math.random() * 6, wob: Math.random() * 6, chase: 0, rest: 0, puff: 0, puffT: -2, warn: null };
   f.obj.yaw.rotation.y = yawFor(dir);
   scene.add(f.obj.root);
@@ -227,7 +230,7 @@ function spawnFish(species, x, y, dir, variant = null) {
 // A new fish (or a school) arrives from just past the left or right edge of the view.
 function spawn(inside = false) {
   const sp = G.spawner.next(G.mode === 'play' ? P.tier : 2, G.stats.variants), dir = sp.fromLeft ? 1 : -1;
-  const len = FISH_LEN[sp.species.tier];
+  const len = fishLen(sp.species.tier);
   let x0 = dir > 0 ? view.x0 - 80 - len : view.x1 + 80 + len;
   if (inside) { // filling the sea at the start of a level: anywhere in view, but not on top of you
     x0 = view.x0 + G.spawner.rand() * (view.x1 - view.x0);
@@ -308,7 +311,7 @@ function updatePlayer(dt) {
     P.x = clamp(P.x + P.vx * dt, -WORLD.x + 40, WORLD.x - 40);
     P.y = clamp(P.y + P.vy * dt, -WORLD.y + P.len * 0.25, WORLD.y - P.len * 0.25);
   }
-  P.len += (FISH_LEN[P.tier] - P.len) * Math.min(1, dt * 4);
+  P.len += (fishLen(P.tier) - P.len) * Math.min(1, dt * 4);
   P.pulse = Math.max(0, P.pulse - dt * 5);
   P.safe -= dt;
   pose(P, dt);
@@ -413,9 +416,9 @@ function eat(f) {
   G.combo = G.comboT > 0 ? G.combo + 1 : 1;
   G.comboT = st.comboGap;
   const mult = Math.min(G.combo, st.comboMax) * (V[v]?.points ?? 1);
-  const pts = SCORE[f.tier] * mult;
+  const pts = pointsFor(f.s.rank + (v === 'giant' ? 1 : 0)) * mult; // bigger fish (higher up the ladder) are worth more
   G.score += pts;
-  let grow = GROW[Math.min(f.tier, 3)] * st.growth;
+  let grow = GROW[clamp(f.tier, -1, 3)] * st.growth;
   if (v === 'spiny') { // it stings, but it's very filling (Shark Skin: no sting, even more filling)
     grow *= st.combos.sharkSkin ? 3 : V.spiny.growth;
     const stun = st.combos.sharkSkin ? 0 : V.spiny.stun * st.stun;
@@ -436,7 +439,7 @@ function eat(f) {
   const t = tierFor(G.meter);
   if (t > P.tier) {
     P.tier = t;
-    const food = G.zone.fish.filter(s => s.tier < t && s.tier > 0).map(s => s.name);
+    const food = G.levelFish.filter(s => s.tier === t - 1).map(s => s.name); // the ones you just outgrew
     banner('GROWN!', `Now you can eat: ${food.join(', ')}`);
     burst(P.x, P.y, 24, 260);
     jingle([523, 659, 784, 1047]);
@@ -479,7 +482,7 @@ function levelCleared(title = 'LEVEL CLEAR!') {
 // It circles you, shakes (a red "!") and lunges. After a lunge it slows right down: that's your chance to bite its
 // tail. Its jaws (the front of its body) eat you. Its health bar splits into phases, and each phase adds attacks.
 function startApex() {
-  const a = G.zone.apex, len = FISH_LEN[3] * a.size, side = Math.random() < 0.5 ? -1 : 1, hp = apexHp(a, levelInfo(G.level).loop);
+  const a = G.zone.apex, len = fishLen(3) * a.size, side = Math.random() < 0.5 ? -1 : 1, hp = apexHp(a, levelInfo(G.level).loop);
   const obj = makeFish({ key: `apex-${a.key}`, ...a.spec }), warn = makeWarn();
   warn.scale.setScalar(80);
   warn.visible = false;
@@ -715,7 +718,7 @@ function startRun(seed = Math.floor(Math.random() * 1e9), classKey = 'scamp') {
   setClass(CLASSES.find(c => c.key === classKey) ?? CLASSES[0]);
   Object.assign(G, { mode: 'play', seed, level: 1, score: 0, combo: 0, comboT: 0, points: 0, windUsed: 0, owned: G.cls.free ? [G.cls.free] : [] });
   G.stats = computeStats(G.cls.key, G.owned);
-  Object.assign(P, { alive: true, gulp: 0, len: FISH_LEN[1], pulse: 0, face: 1, boost: 0, charge: 1 });
+  Object.assign(P, { alive: true, gulp: 0, len: fishLen(1), pulse: 0, face: 1, boost: 0, charge: 1 });
   P.obj.root.visible = true;
   cam.dist = camDist(VIEW_H[1]);
   shown = {};
@@ -739,7 +742,7 @@ function toMenu() {
 let last = 0;
 window.game = {
   manual: false, // the playtest sets this and steps the game itself
-  startRun, toMenu, update, render, spawnFish, boost, nextLevel, buy, G, camera, icons,
+  startRun, toMenu, update, render, spawnFish, speciesAt, boost, nextLevel, buy, G, camera, icons,
   get info() { return { score: G.score, level: G.level, zone: G.zone.name, index: G.index, spot: G.spot.name, tier: P.tier, points: G.points, owned: G.owned, stats: G.stats }; },
 };
 addEventListener('resize', resize);

@@ -22,7 +22,9 @@ function installHarness() {
   game.manual = true;
   window.__step = n => { for (let i = 0; i < n; i++) { if (['playing', 'over', 'menu'].includes(app.state)) game.update(1 / 60); } game.render(); };
   window.__P = () => game.G.player;
-  window.__species = key => game.G.zone.fish.find(s => s.key === key);
+  window.__species = key => game.speciesAt(key); // sized for the current level (its tier there)
+  window.__food = () => game.G.levelFish.find(f => f.tier <= 0 && f.behavior !== 'puff').key; // the smallest fish on this level
+  window.__big = () => game.G.levelFish.filter(f => f.behavior !== 'puff').reduce((a, f) => (f.tier > a.tier ? f : a)).key; // its biggest
   window.__put = (key, dx, dy, dir = -1, variant = null) => game.spawnFish(__species(key), __P().x + dx, __P().y + dy, dir, variant);
   window.__clear = () => { game.G.fish.forEach(f => (f.x += 9000)); game.update(1 / 60); }; // send every fish far away (they despawn)
   // How tall the player looks on screen, as a share of the screen height.
@@ -58,8 +60,8 @@ function installHarness() {
   window.__clearLevel = () => {
     for (let i = 0; i < 120 && game.G.phase !== 'swim'; i++) game.update(1 / 60); // you can't eat while a level fades in
     __P().safe = 9;
-    game.G.meter = METER_NEED - 1;
-    __put('minnow', 5, 0);
+    game.G.meter = METER_NEED - 0.2; // any bite fills it
+    __put(__food(), 5, 0);
     for (let i = 0; i < 600 && app.state === 'playing'; i++) game.update(1 / 60);
     game.render();
     return app.state;
@@ -170,9 +172,9 @@ async function run(browser, name, options) {
     const before = g.fish.length;
     __put('minnow', 10, 0);
     __step(1);
-    return { meter: g.meter, score: g.score, gone: g.fish.length === before };
+    return { meter: g.meter, want: GROW[0], score: g.score, gone: g.fish.length === before };
   });
-  check(`${name}: eating a minnow fills the meter and scores`, eat1.meter === 1 && eat1.score === 10 && eat1.gone, JSON.stringify(eat1));
+  check(`${name}: eating a minnow fills the meter and scores`, eat1.meter === eat1.want && eat1.score === 10 && eat1.gone, JSON.stringify(eat1));
   const eat2 = await page.evaluate(() => { __put('minnow', 10, 0); __step(1); return { score: game.G.score, combo: game.G.combo }; });
   check(`${name}: a quick second bite doubles the points (combo)`, eat2.combo === 2 && eat2.score === 30, JSON.stringify(eat2));
   const bump = await page.evaluate(() => { const f = __put('butterfly', 30, 0); __step(1); return { alive: __P().alive, there: game.G.fish.includes(f) }; });
@@ -296,6 +298,13 @@ async function run(browser, name, options) {
   check(`${name}: level 2 is a different spot (Sandy Shallows, its own landmark)`, after.spot === 'Sandy Shallows' && after.landmark === 'grass' && after.sub.includes('2/5'), JSON.stringify(after));
   await page.evaluate(() => __step(90));
   check(`${name}: and the new level's fish are bigger than you`, await page.evaluate(() => __chipsOk() && __P().tier === 1 && game.G.fish.some(f => f.tier > 1)));
+  const ladder = await page.evaluate(() => {
+    const on = key => game.G.levelFish.find(f => f.key === key);
+    const P = __P(), parrot = on('parrot'), trigger = on('trigger'), angel = on('angel');
+    return { parrot: parrot?.tier, trigger: trigger?.tier, angel: angel?.tier, minnow: !!on('minnow'), eatParrot: !!parrot && canEat(P, parrot), eatAngel: !!angel && canEat(P, angel) };
+  });
+  check(`${name}: you keep your size: the parrotfish and triggerfish you ate at the end of level 1 are still food`, ladder.parrot === 0 && ladder.trigger === 0 && ladder.eatParrot, JSON.stringify(ladder));
+  check(`${name}: new bigger fish (angelfish) join that you can't eat yet, and the tiniest (minnows) are gone`, ladder.angel === 2 && !ladder.eatAngel && !ladder.minnow, JSON.stringify(ladder));
   await shot('07-level2');
 
   // ---------- Every reef level looks different; after level 5 the reef starts over, harder ----------
@@ -312,8 +321,8 @@ async function run(browser, name, options) {
   const arrive = await page.evaluate(() => {
     for (let i = 0; i < 120 && game.G.phase !== 'swim'; i++) game.update(1 / 60);
     __P().safe = 1e6;
-    game.G.meter = METER_NEED - 1;
-    __put('minnow', 5, 0);
+    game.G.meter = METER_NEED - 0.2;
+    __put(__food(), 5, 0);
     __step(1);
     __P().safe = 1e6; // the apex's arrival gives you 1.5 s; the test player stays safe while it fights
     const A = game.G.apex;
@@ -390,7 +399,7 @@ async function run(browser, name, options) {
     __clear();
     const shields = P.shields;
     P.safe = 0;
-    __put('grouper', 15, 0);
+    __put(__big(), 15, 0); // the level's biggest fish: it can eat you
     __step(1);
     return { shields, alive: P.alive, left: P.shields, perks: document.getElementById('perks').textContent };
   });
