@@ -14,9 +14,11 @@ let best = { score: oldBest.score ?? 0, level: oldBest.level ?? oldBest.depth ??
 const progress = { bestLevel: best.level, bestScore: best.score, ...store.get('gulp-progress', {}) };
 const unlockedClasses = () => CLASSES.filter(c => classUnlocked(c, progress)).map(c => c.key);
 // Called by the game as you clear levels, so a class can unlock mid-run.
-function noteProgress({ level, score }) {
+function noteProgress({ level = 0, score = 0, apex = false, portal = false }) {
   progress.bestLevel = Math.max(progress.bestLevel, level);
   progress.bestScore = Math.max(progress.bestScore, score);
+  if (apex) progress.apexBeaten = true;
+  if (portal) progress.portals = (progress.portals ?? 0) + 1;
   store.set('gulp-progress', progress);
 }
 
@@ -60,7 +62,7 @@ const buzz = ms => { if (settings.vibrate) try { navigator.vibrate?.(ms); } catc
 // ---------- Menus ----------
 const $ = id => document.getElementById(id);
 // The whole game is in one of these states; only 'playing' accepts game input.
-// 'menu' | 'playing' | 'paused' | 'tree' (skill tree between levels) | 'over'
+// 'menu' | 'playing' | 'paused' | 'tree' (skill tree between levels) | 'keep' (skills to keep through a portal) | 'over'
 const app = { state: 'menu', settingsFrom: 'main' };
 // What the player is pressing, read by the game every frame. stick: the floating joystick (x right, y up, length
 // up to 1); mouse: the pointer's page position; keys: arrow keys / WASD held down.
@@ -124,7 +126,7 @@ function pauseGame() {
   if (app.state !== 'playing') return;
   app.state = 'paused';
   const i = game.info;
-  $('pauseInfo').textContent = `${i.zone} ${i.index + 1}/${LEVELS_PER_ZONE} (level ${i.level}) · score ${i.score.toLocaleString()}`;
+  $('pauseInfo').textContent = `World ${i.world + 1} · ${i.zone} ${i.index + 1}/${LEVELS_PER_ZONE} (level ${i.level}) · ${i.shards}/${LEVELS_PER_ZONE} shards · score ${i.score.toLocaleString()}`;
   showScreen('pause');
 }
 
@@ -182,6 +184,39 @@ function leaveTree() {
   document.activeElement?.blur();
   game.nextLevel();
 }
+// ---------- Through the portal: pick the skills to keep ----------
+let keepMax = 1, keepSel = [];
+function openKeep(n) {
+  app.state = 'keep';
+  keepMax = n;
+  keepSel = [];
+  drawKeep();
+  showScreen('keep');
+}
+function drawKeep() {
+  const i = game.info, list = i.owned.filter(id => id !== i.free);
+  $('keepInfo').textContent = list.length
+    ? `Your size, skill tree and shards start over in the next world. Keep ${keepMax} skill${keepMax > 1 ? 's' : ''} (pearls found in this world let you keep more): ${keepSel.length}/${keepMax} picked.`
+    : 'You have no skills to keep yet. Your size and shards start over in the next world.';
+  $('keepList').replaceChildren(...list.map(id => {
+    const b = document.createElement('button'), on = keepSel.includes(id);
+    b.className = `keepSkill${on ? ' on' : ''}`;
+    b.dataset.keep = id;
+    b.textContent = `${on ? '\u2713 ' : ''}${skillName(id)}`;
+    return b;
+  }));
+}
+function toggleKeep(id) {
+  if (keepSel.includes(id)) keepSel = keepSel.filter(k => k !== id);
+  else if (keepSel.length < keepMax) keepSel.push(id);
+  drawKeep();
+}
+function diveIn() {
+  app.state = 'playing';
+  showScreen(null);
+  document.activeElement?.blur();
+  game.enterWorld(keepSel);
+}
 function resumeGame() {
   app.state = 'playing';
   showScreen(null);
@@ -192,7 +227,7 @@ function openSettings() {
   showScreen('settings');
 }
 // Called by the game when you get eaten.
-function runOver({ score, level, eatenBy }) {
+function runOver({ score, level, eatenBy, world = 1, shards = 0 }) {
   const before = unlockedClasses();
   noteProgress({ level, score });
   const isBest = score > best.score;
@@ -201,7 +236,7 @@ function runOver({ score, level, eatenBy }) {
     store.set('gulp-best', best);
   }
   app.state = 'over';
-  $('overWho').textContent = `Gulped by ${/^[aeiou]/i.test(eatenBy) ? 'an' : 'a'} ${eatenBy} on level ${level}.`;
+  $('overWho').textContent = `Gulped by ${/^[aeiou]/i.test(eatenBy) ? 'an' : 'a'} ${eatenBy} on level ${level}, in world ${world} (${shards}/${LEVELS_PER_ZONE} shards).`;
   $('overScore').textContent = `Score ${score.toLocaleString()}`;
   $('overBest').textContent = isBest ? 'New best!' : `Best: ${best.score.toLocaleString()}`;
   const fresh = CLASSES.filter(c => unlockedClasses().includes(c.key) && !before.includes(c.key)).map(c => c.name);
@@ -213,6 +248,7 @@ $('ui').addEventListener('click', e => {
   const btn = e.target.closest('button');
   if (!btn || !window.game) return;
   if (btn.dataset.cls) return pickClass(btn.dataset.cls);
+  if (btn.dataset.keep) return toggleKeep(btn.dataset.keep);
   if (btn.dataset.node) { treeSel = btn.dataset.node; drawTree(); return $('learnBtn').hidden ? null : $('learnBtn').focus({ preventScroll: true }); }
   const action = btn.dataset.action;
   if (action === 'learn' && treeSel) {
@@ -220,6 +256,7 @@ $('ui').addEventListener('click', e => {
     if (game.buy(b.key, Number(treeSel.slice(b.key.length)) - 1)) jingle([659, 880, 1175], 70);
     drawTree();
   } else if (action === 'next') leaveTree();
+  else if (action === 'dive') diveIn();
   else if (action === 'play') startRun();
   else if (action === 'resume') resumeGame();
   else if (action === 'menu') toMenu();

@@ -213,6 +213,11 @@ function colored(geo, color, m) {
 const M = (x, y, z, rx = 0, ry = 0, rz = 0, sx = 1, sy = sx, sz = sx) =>
   new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz)), new THREE.Vector3(sx, sy, sz));
 
+// How far the scenery reaches either side (a little past the edge of the play area), and how many times wider that
+// is than the original sea, so prop counts keep the same density.
+const SPAN = WORLD.x + 300, WIDE = SPAN / 4200;
+const across = (i, n, jitter, R) => -SPAN + (i + 0.5) * 2 * SPAN / n + R(-jitter, jitter); // n things spread evenly across
+
 // The sea floor's dunes, so props can sit on it.
 const floorAt = (x, z, base) => base + 30 * Math.sin(x / 420) + 22 * Math.sin(z / 310 + x / 760);
 
@@ -225,8 +230,8 @@ export const waterAt = (water, y, c = new THREE.Color()) =>
 function landmark(kind, geos, R, base, rand, CORAL) {
   const at = (x, z) => floorAt(x, z, base), pick = () => CORAL[Math.floor(rand() * CORAL.length)];
   if (kind === 'garden') { // giant brain corals with tall coral trees around them
-    for (let i = 0; i < 7; i++) {
-      const x = -3600 + i * 1200 + R(-300, 300), z = R(-1900, -900), r = R(220, 340);
+    for (let i = 0, n = Math.round(7 * WIDE); i < n; i++) {
+      const x = across(i, n, 300, R), z = R(-1900, -900), r = R(220, 340);
       geos.push(colored(new THREE.IcosahedronGeometry(1, 2), pick(), M(x, at(x, z), z, 0, R(0, 3), 0, r, r * 0.65, r)));
       for (let b = 0; b < 6; b++) {
         const len = R(300, 520);
@@ -234,8 +239,8 @@ function landmark(kind, geos, R, base, rand, CORAL) {
       }
     }
   } else if (kind === 'grass') { // a seagrass meadow
-    for (let i = 0; i < 520; i++) {
-      const x = R(-4500, 4500), z = R(-2200, -150), h = R(70, 230);
+    for (let i = 0, n = Math.round(520 * WIDE); i < n; i++) {
+      const x = R(-SPAN, SPAN), z = R(-2200, -150), h = R(70, 230);
       geos.push(colored(new THREE.ConeGeometry(6, h, 3).translate(0, h / 2, 0), i % 3 ? 0x58b85c : 0x7fcf5a, M(x, at(x, z), z, R(-0.2, 0.2), R(0, 3), R(-0.3, 0.3))));
     }
   } else if (kind === 'wreck') { // a sunken ship, half buried and tilted, with barrels scattered around
@@ -251,29 +256,62 @@ function landmark(kind, geos, R, base, rand, CORAL) {
       geos.push(colored(new THREE.CylinderGeometry(45, 45, 90, 8), 0x7a5a38, M(bx, at(bx, bz) + 40, bz, R(0, 1.6), 0, R(0, 1.6))));
     }
   } else if (kind === 'arches') { // stone arches standing on the floor, coral on top
-    for (let i = 0; i < 4; i++) {
-      const x = -3000 + i * 2000 + R(-300, 300), z = R(-2200, -900), r = R(380, 520), t = R(70, 110);
+    for (let i = 0, n = Math.round(4 * WIDE); i < n; i++) {
+      const x = across(i, n, 300, R), z = R(-2200, -900), r = R(380, 520), t = R(70, 110);
       geos.push(colored(new THREE.TorusGeometry(r, t, 5, 12, Math.PI), 0x76889a, M(x, at(x, z) - t * 0.5, z, 0, R(-0.5, 0.5), 0)));
       geos.push(colored(new THREE.IcosahedronGeometry(1, 1), pick(), M(x, at(x, z) + r + t * 0.6, z, 0, 0, 0, t * 1.2, t * 0.6, t * 1.2)));
     }
   } else if (kind === 'wall') { // the reef wall at the edge of the drop-off
-    for (let i = 0; i < 70; i++) {
-      const x = -4600 + i * 135 + R(-40, 40), z = R(-1500, -1250), h = R(500, 1100), r = R(140, 220), y0 = at(x, z);
+    for (let i = 0, n = Math.round(70 * WIDE); i < n; i++) {
+      const x = across(i, n, 40, R), z = R(-1500, -1250), h = R(500, 1100), r = R(140, 220), y0 = at(x, z);
       for (let y = y0; y < y0 + h; y += r * 1.1) geos.push(colored(new THREE.DodecahedronGeometry(1, 0), (i + Math.round(y / r)) % 2 ? 0x6d7f92 : 0x7a8ea0, M(x, y, z + R(-60, 60), R(0, 3), R(0, 3), R(0, 3), r, r * 0.8, r)));
       if (rand() < 0.7) geos.push(colored(new THREE.IcosahedronGeometry(1, 1), pick(), M(x, y0 + h, z + 40, 0, 0, 0, r * 0.8, r * 0.45, r * 0.8)));
     }
   }
 }
 
+// Obstacles on the play plane (z = 0): rock pillars rising from the floor and arches you can swim under. Each rock
+// is also a collision circle (x, y, r) that you and the fish can't pass through. None near where you start.
+function obstacles(geos, R, rand, CORAL, clear = []) {
+  const circles = [], floor = -WORLD.y - 50, half = WORLD.x - 300, n = OBSTACLES.count;
+  const rock = (x, y, r, k) => {
+    geos.push(colored(new THREE.DodecahedronGeometry(1, 0), k % 2 ? 0x75899a : 0x667b8c, M(x, y, 0, R(0, 3), R(0, 3), R(0, 3), r, r * 0.92, r * 0.8)));
+    circles.push({ x, y, r: r * 0.9 });
+  };
+  const cap = (x, y, r) => geos.push(colored(new THREE.IcosahedronGeometry(1, 1), CORAL[Math.floor(rand() * CORAL.length)], M(x, y, 0, 0, R(0, 3), 0, r, r * 0.5, r * 0.7)));
+  for (let i = 0; i < n; i++) {
+    let x = -half + (i + 0.5) * 2 * half / n + R(-250, 250);
+    if (Math.abs(x) < OBSTACLES.clear) x = Math.sign(x || 1) * (OBSTACLES.clear + R(0, 300));
+    if (clear.some(c => Math.abs(x - c) < 1500)) continue; // room for the level's wreck
+    if (rand() < 0.65) { // a pillar: a stack of rocks getting smaller towards the top
+      let y = floor, r = R(150, 240);
+      for (let k = 0, h = 3 + Math.floor(rand() * 6); k < h; k++, r *= R(0.8, 0.9)) { // 3-8 rocks: some reach mid-water
+        y += k ? r * 1.5 : r * 0.6;
+        rock(x + R(-30, 30), y, r, k);
+      }
+      if (rand() < 0.6) cap(x, y + r * 0.8, r * 1.1);
+    } else { // an arch: two legs and a curved top, with a gap underneath to swim through
+      const w = R(380, 600), h = R(900, 1500), r = R(100, 140);
+      for (const side of [-1, 1]) for (let y = floor + r * 0.5; y < floor + h - r; y += r * 1.4) rock(x + side * w, y, r, Math.round(y));
+      for (let k = 0; k <= 8; k++) {
+        const a = Math.PI * k / 8;
+        rock(x - Math.cos(a) * w, floor + h - r + Math.sin(a) * r * 2.2, r, k);
+      }
+      cap(x, floor + h + r * 1.4, r * 1.3);
+    }
+  }
+  return circles;
+}
+
 // Builds one level's scenery into the scene: its zone's style with the level's own colours, prop mix and landmark.
-// rand is a seeded generator, so a level looks the same every time. Returns update(dt, camera) for the moving
-// bits (light rays, bubbles, marine snow) and dispose().
-export function makeZone(zone, spot, scene, rand) {
+// rand is a seeded generator, so a level looks the same every time. clear: x positions to keep free of rocks. Returns update(dt, camera) for the moving
+// bits (light rays, bubbles, marine snow), dispose(), and circles: the obstacles you can't swim through.
+export function makeZone(zone, spot, scene, rand, clear = []) {
   const group = new THREE.Group(), base = -WORLD.y - 70, R = (a, b) => a + rand() * (b - a), water = spot.water ?? zone.water;
   scene.add(group);
 
   // Background: a huge gradient wall far behind everything (no fog on it).
-  const bg = new THREE.PlaneGeometry(16000, 9000, 1, 12), bc = new Float32Array(bg.attributes.position.count * 3), c = new THREE.Color();
+  const bg = new THREE.PlaneGeometry(2 * SPAN + 6000, 9000, 1, 12), bc = new Float32Array(bg.attributes.position.count * 3), c = new THREE.Color();
   for (let i = 0; i < bg.attributes.position.count; i++) waterAt(water, bg.attributes.position.getY(i) * 0.9, c).toArray(bc, i * 3);
   bg.setAttribute('color', new THREE.BufferAttribute(bc, 3));
   const wall = new THREE.Mesh(bg, new THREE.MeshBasicMaterial({ vertexColors: true, fog: false }));
@@ -281,7 +319,7 @@ export function makeZone(zone, spot, scene, rand) {
   group.add(wall);
 
   // Sea floor with dunes.
-  const fl = new THREE.PlaneGeometry(16000, 7000, 80, 36).rotateX(-Math.PI / 2);
+  const fl = new THREE.PlaneGeometry(2 * SPAN + 5000, 7000, Math.round(80 * WIDE), 36).rotateX(-Math.PI / 2);
   const fp = fl.attributes.position;
   for (let i = 0; i < fp.count; i++) fp.setY(i, floorAt(fp.getX(i), fp.getZ(i) - 2000, base) - base);
   fl.computeVertexNormals();
@@ -289,9 +327,10 @@ export function makeZone(zone, spot, scene, rand) {
   floor.position.set(0, base, -2000);
   group.add(floor);
 
-  // The surface, seen from below.
-  const surf = new THREE.Mesh(new THREE.PlaneGeometry(16000, 7000).rotateX(Math.PI / 2),
-    new THREE.MeshBasicMaterial({ color: 0xe6fdff, transparent: true, opacity: 0.55, side: THREE.DoubleSide }));
+  // The surface, seen from below: a faint sheet tinted like the water just under it (a near-white one washed the
+  // top of the screen out).
+  const surf = new THREE.Mesh(new THREE.PlaneGeometry(2 * SPAN + 5000, 7000).rotateX(Math.PI / 2),
+    new THREE.MeshBasicMaterial({ color: new THREE.Color(water.top).lerp(new THREE.Color(0xffffff), 0.25), transparent: true, opacity: 0.25, side: THREE.DoubleSide, depthWrite: false }));
   surf.position.set(0, WORLD.y + 90, -2000);
   group.add(surf);
 
@@ -300,8 +339,8 @@ export function makeZone(zone, spot, scene, rand) {
   const CORAL = [0xff6f91, 0xff9f43, 0xb36bff, 0xffd166, 0x5ee6b0, 0xff5e5e];
   const geos = [], kinds = [0.3, 0.2, 0.15, 0.1, 0.15 * (spot.rocks ?? 1), 0.1 * (spot.weed ?? 1)];
   const total = kinds.reduce((a, b) => a + b), cut = kinds.map((k, i) => kinds.slice(0, i + 1).reduce((a, b) => a + b) / total);
-  for (let i = 0, n = spot.coral ?? 150; i < n; i++) {
-    const x = R(-4200, 4200), z = R(-2900, -120), y = floorAt(x, z, base), roll = rand(), col = CORAL[Math.floor(rand() * CORAL.length)];
+  for (let i = 0, n = Math.round((spot.coral ?? 150) * WIDE); i < n; i++) {
+    const x = R(-SPAN, SPAN), z = R(-2900, -120), y = floorAt(x, z, base), roll = rand(), col = CORAL[Math.floor(rand() * CORAL.length)];
     const kind = cut.findIndex(c => roll < c); // 0 branch, 1 brain, 2 tube, 3 fan, 4 rock, 5 weed
     if (kind === 0) { // branching coral
       for (let b = 0, n = 4 + Math.floor(rand() * 4); b < n; b++) {
@@ -330,8 +369,8 @@ export function makeZone(zone, spot, scene, rand) {
     }
   }
   // Rock spires rising from the floor behind the play area: mid-distance shapes that slide past as you swim.
-  for (let i = 0, n = spot.spires ?? 14; i < n; i++) {
-    const x = -4200 + (i + 0.5) * 8400 / n + R(-200, 200), z = R(-3100, -1700);
+  for (let i = 0, n = Math.round((spot.spires ?? 14) * WIDE); i < n; i++) {
+    const x = across(i, n, 200, R), z = R(-3100, -1700);
     let y = floorAt(x, z, base), r = R(110, 180);
     for (let k = 0, n = 3 + Math.floor(rand() * 4); k < n; k++, r *= R(0.72, 0.88)) {
       geos.push(colored(new THREE.DodecahedronGeometry(1, 0), k % 2 ? 0x7d93a0 : 0x6a8290, M(x + R(-40, 40), y + r * 0.7, z + R(-30, 30), R(0, 3), R(0, 3), R(0, 3), r, r * 1.2, r)));
@@ -340,15 +379,16 @@ export function makeZone(zone, spot, scene, rand) {
     if (rand() < 0.6) geos.push(colored(new THREE.IcosahedronGeometry(1, 1), CORAL[Math.floor(rand() * CORAL.length)], M(x, y + 10, z, 0, 0, 0, r * 0.9, r * 0.5, r * 0.9)));
   }
   landmark(spot.landmark, geos, R, base, rand, CORAL);
+  const circles = obstacles(geos, R, rand, CORAL, clear);
   const props = new THREE.Mesh(mergeGeometries(geos), caustics(new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.8, side: THREE.DoubleSide }), 0.4));
   group.add(props);
 
   // Light rays from the surface: faint additive cones that sway.
   const rayMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.06, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false });
   const rays = [];
-  for (let i = 0, n = spot.rays ?? 9; i < n; i++) {
+  for (let i = 0, n = Math.round((spot.rays ?? 9) * WIDE); i < n; i++) {
     const ray = new THREE.Mesh(new THREE.CylinderGeometry(30, 260, 3600, 12, 1, true).translate(0, -1800, 0), rayMat);
-    ray.position.set(-4500 + (i + 0.5) * 9000 / n + R(-200, 200), WORLD.y + 100, R(-1400, -300));
+    ray.position.set(across(i, n, 200, R), WORLD.y + 100, R(-1400, -300));
     ray.userData.phase = rand() * 6;
     rays.push(ray);
     group.add(ray);
@@ -370,6 +410,7 @@ export function makeZone(zone, spot, scene, rand) {
   let t = 0;
   return {
     group,
+    circles,
     update(dt, cam) {
       t += dt;
       for (let i = 0; i < S; i++) {
@@ -433,21 +474,119 @@ function dotTexture() {
   return dotTex;
 }
 
-// The red "!" that pops up over a hunter when it starts chasing you.
-let warnMat;
-export function makeWarn() {
-  if (!warnMat) {
+// A round badge with a symbol on it, always drawn on top: the red "!" over a hunter that starts chasing you, and the
+// symbols inside power-up bubbles. One material per badge, shared.
+const badgeMats = new Map();
+export function makeBadge(text, color, size = 54) {
+  const key = `${text}/${color}`;
+  if (!badgeMats.has(key)) {
     const cv = document.createElement('canvas');
     cv.width = cv.height = 64;
     const g = cv.getContext('2d');
-    g.fillStyle = '#ff3b3b'; g.beginPath(); g.arc(32, 32, 28, 0, Math.PI * 2); g.fill();
-    g.fillStyle = '#fff'; g.font = 'bold 44px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('!', 32, 35);
+    g.fillStyle = color; g.beginPath(); g.arc(32, 32, 28, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#fff'; g.font = 'bold 40px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(text, 32, 35);
     const tex = new THREE.CanvasTexture(cv);
     tex.colorSpace = THREE.SRGBColorSpace;
-    warnMat = new THREE.SpriteMaterial({ map: tex, depthTest: false, fog: false });
+    badgeMats.set(key, new THREE.SpriteMaterial({ map: tex, depthTest: false, fog: false }));
   }
-  const s = new THREE.Sprite(warnMat);
-  s.scale.setScalar(54);
+  const s = new THREE.Sprite(badgeMats.get(key));
+  s.scale.setScalar(size);
   s.renderOrder = 10;
   return s;
+}
+export const makeWarn = () => makeBadge('!', '#ff3b3b');
+
+// ---------- Oysters and power-ups ----------
+// An oyster at width 1, sitting on its flat bottom: a ridged bottom shell, a pink inside, a pearl, and a lid on a
+// hinge at the back (lid.rotation.x below 0 opens it towards the camera). The pearl is white or black.
+const oysterGeo = {};
+const shellMat = caustics(new THREE.MeshStandardMaterial({ color: 0x8f8597, roughness: 0.85, flatShading: true }), 0.4);
+const insideMat = new THREE.MeshStandardMaterial({ color: 0xffc7d6, roughness: 0.4, flatShading: true, side: THREE.DoubleSide });
+const pearlMats = {
+  white: new THREE.MeshStandardMaterial({ color: 0xfdfbff, roughness: 0.12, metalness: 0.25, emissive: 0x5a5a6a }),
+  black: new THREE.MeshStandardMaterial({ color: 0x2a2433, roughness: 0.1, metalness: 0.7, emissive: 0x2a1a44 }),
+};
+export function makeOyster() {
+  oysterGeo.half ??= new THREE.SphereGeometry(0.5, 14, 5, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.32, 0.8); // a dome
+  oysterGeo.inside ??= new THREE.CircleGeometry(0.47, 14).rotateX(-Math.PI / 2).scale(1, 1, 0.78);
+  oysterGeo.pearl ??= new THREE.SphereGeometry(0.1, 14, 10);
+  const root = new THREE.Group(), bottom = new THREE.Mesh(oysterGeo.half, shellMat);
+  bottom.rotation.x = Math.PI; // upside down: the bottom shell's dome points down
+  bottom.position.y = 0.16;
+  const inside = new THREE.Mesh(oysterGeo.inside, insideMat);
+  inside.position.y = 0.165;
+  const hinge = new THREE.Group(), lid = new THREE.Mesh(oysterGeo.half, shellMat);
+  hinge.position.set(0, 0.16, -0.4);
+  lid.position.z = 0.4;
+  hinge.add(lid);
+  const pearl = new THREE.Mesh(oysterGeo.pearl, pearlMats.white);
+  pearl.position.set(0, 0.25, 0.05);
+  root.add(bottom, inside, hinge, pearl);
+  return { root, hinge, pearl, setBlack: black => { pearl.material = black ? pearlMats.black : pearlMats.white; } };
+}
+
+// A power-up: a see-through bubble with its symbol inside.
+const pickupBubble = new THREE.SphereGeometry(1, 16, 12);
+const pickupMat = new THREE.MeshStandardMaterial({ color: 0xdff8ff, transparent: true, opacity: 0.3, roughness: 0.05, metalness: 0.1, depthWrite: false });
+export function makePickup(kind) {
+  const root = new THREE.Group(), k = PICKUPS.kinds[kind];
+  const bubble = new THREE.Mesh(pickupBubble, pickupMat);
+  bubble.scale.setScalar(48);
+  root.add(bubble, makeBadge(k.symbol, k.color, 60));
+  return root;
+}
+
+// ---------- Wreckage, shards and the portal ----------
+// A wrecked boat on the play plane, built around x = 0 on the floor: a hull broken in two (leaning halves with a gap
+// between them where the shard hides), a mast fallen across the top, and crates. Returns the mesh, its collision
+// circles, where the shard sits and the openings an eel could hide in (all relative to x = 0).
+const woodMat = caustics(new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.9 }), 0.35);
+export function makeWreck(rand) {
+  const R = (a, b) => a + rand() * (b - a), geos = [], circles = [], floor = -WORLD.y - 20;
+  // A plank-built box, tilted, plus circles along its length.
+  const hull = (cx, cy, len, h, tilt, color) => {
+    const m = M(cx, cy, 0, 0, 0, tilt);
+    geos.push(colored(new THREE.BoxGeometry(len, h, 200), color, m));
+    for (let k = 0; k < 4; k++) geos.push(colored(new THREE.BoxGeometry(len * 1.01, 10, 204), 0x3a2a1c, m.clone().multiply(M(0, -h / 2 + (k + 0.5) * h / 4, 0))));
+    const n = Math.ceil(len / (h * 0.75));
+    for (let k = 0; k < n; k++) {
+      const t = -len / 2 + h / 2 + k * (len - h) / Math.max(1, n - 1);
+      circles.push({ x: cx + Math.cos(tilt) * t, y: cy + Math.sin(tilt) * t, r: h * 0.55 });
+    }
+  };
+  hull(-470, floor + 150, 680, 230, 0.22, 0x6b5038);
+  hull(450, floor + 165, 620, 240, -0.3, 0x5e4630);
+  // The fallen mast across the gap, high enough to swim under.
+  const mx0 = -560, my0 = floor + 520, mx1 = 560, my1 = floor + 400, ml = Math.hypot(mx1 - mx0, my1 - my0), ma = Math.atan2(my1 - my0, mx1 - mx0);
+  geos.push(colored(new THREE.CylinderGeometry(24, 30, ml, 7).rotateZ(Math.PI / 2), 0x4a3726, M((mx0 + mx1) / 2, (my0 + my1) / 2, 0, 0, 0, ma)));
+  for (let k = 0; k <= 12; k++) circles.push({ x: mx0 + (mx1 - mx0) * k / 12, y: my0 + (my1 - my0) * k / 12, r: 40 });
+  // Crates scattered on the floor either side.
+  for (const x of [-980 + R(-60, 60), 920 + R(-60, 60), -1130 + R(-40, 40)]) {
+    const s = R(90, 130);
+    geos.push(colored(new THREE.BoxGeometry(s, s, s), 0x8a6a44, M(x, floor + s / 2, 0, 0, R(0, 1), R(-0.2, 0.2))));
+    circles.push({ x, y: floor + s / 2, r: s * 0.62 });
+  }
+  const mesh = new THREE.Mesh(mergeGeometries(geos), woodMat);
+  return { mesh, circles, shard: { x: 0, y: floor + 95 }, holes: [{ x: -470, y: floor + 150, dir: -1 }, { x: 0, y: floor + 95, dir: 1 }, { x: 450, y: floor + 165, dir: 1 }] };
+}
+
+// A glowing crystal shard, and a sparkle that shows where it is once you're close.
+const shardMat = new THREE.MeshStandardMaterial({ color: 0x9ef0ff, emissive: 0x3fc8ff, emissiveIntensity: 1.2, roughness: 0.15, metalness: 0.3, flatShading: true });
+export function makeShard() {
+  const root = new THREE.Group(), gem = new THREE.Mesh(new THREE.OctahedronGeometry(1, 0), shardMat);
+  gem.scale.set(26, 52, 26);
+  const glint = makeBadge('✦', '#3fc8ff', 70);
+  glint.position.y = 90;
+  root.add(gem, glint);
+  return { root, gem, glint };
+}
+
+// The portal: a glowing ring with a swirling disc inside, and the orb (the five shards made whole) at its heart.
+const portalMat = new THREE.MeshStandardMaterial({ color: 0xc58bff, emissive: 0x8a3fff, emissiveIntensity: 1.4, roughness: 0.3, flatShading: true });
+const swirlMat = new THREE.MeshBasicMaterial({ color: 0x6a2fd0, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false });
+export function makePortal() {
+  const root = new THREE.Group(), ring = new THREE.Mesh(new THREE.TorusGeometry(1, 0.12, 8, 28), portalMat);
+  const swirl = new THREE.Mesh(new THREE.CircleGeometry(0.95, 6), swirlMat), orb = new THREE.Mesh(new THREE.IcosahedronGeometry(0.22, 1), shardMat);
+  root.add(ring, swirl, orb);
+  return { root, swirl, orb };
 }

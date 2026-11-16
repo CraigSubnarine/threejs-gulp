@@ -10,7 +10,10 @@
 //
 // All sizes are "level units": every level is built at the same scale (tier 1 is 70 long). Between levels the game
 // zooms out and rescales by LEVEL_SCALE (one level = two ranks), so numbers never blow up.
-const WORLD = { x: 2200, y: 1400 };   // half-width and half-height
+const WORLD = { x: 6600, y: 1400 };   // half-width and half-height (a wide sea to explore, about 7 screens across)
+// Rock pillars and arches on the play plane: you and the fish can't swim through them, so prey can be cornered
+// against them (and you can hide behind them). count per level; clear: no obstacles this close to where you start.
+const OBSTACLES = { count: 13, clear: 1400 };
 const VIEW_H = [0, 1280, 1650, 2100]; // how much of the plane the camera shows (height) at your tier 1, 2, 3
 // tilt: degrees the camera looks down on the sea; sway: degrees it swings round as you swim sideways;
 // lead: seconds of your movement it looks ahead.
@@ -62,6 +65,32 @@ const APEX = {
   toughness: 0.5,   // each time round the zones, apexes get 50% more health
 };
 const APEX_ATTACKS = ['lunge', 'flurry']; // lunge: shake, then dash at you; flurry: three quick short lunges
+
+// Oysters on the sea floor (perLevel each level): closed, then open with a pearl showing, then a shiver (the tell),
+// then they snap shut (seconds for each). A pearl is worth white/black × the level in points and counts 1 or
+// blackPearls towards your next bonus skill point. The snap catches a fish of catchTier or smaller (that's the end
+// of the run, unless something saves you); a bigger you just gets pinched. size: the shell's width.
+const OYSTER = { perLevel: 2, closed: 3, open: 2.5, tell: 0.6, snap: 0.4, regrow: 15, white: 500, black: 2500, blackChance: 0.2, blackPearls: 3, catchTier: 1, pinch: 0.6, size: 170 };
+const PEARLS_PER_POINT = 5; // every 5 pearls: +1 skill point
+
+// Power-ups: a bubble drifts down from the top of the view about every `every` seconds (at most one at a time) and
+// pops after `life` seconds. w: how often each kind comes up; time: seconds it lasts.
+const PICKUPS = {
+  every: 20, life: 12, fall: 70,
+  kinds: {
+    shock: { name: 'Shock', w: 1, time: 3, range: 900, symbol: '⚡', color: '#ffb000', desc: 'fish near you go limp' },
+    shrink: { name: 'Shrink', w: 1, time: 6, symbol: '▼', color: '#b36bff', desc: 'fish one size bigger than you shrink into food' },
+    rush: { name: 'Rush', w: 1, time: 6, speed: 1.5, symbol: '»', color: '#1fb5ff', desc: 'swim 50% faster' },
+    shield: { name: 'Bubble Shield', w: 0.8, symbol: '◎', color: '#2ec98a', desc: 'survive the next bite' },
+  },
+};
+
+// Each level hides a shard in a wreck, somewhere out in the wide sea (at least wreckFrom × the half-width from where
+// you start). Five shards (one per level of a world) make an orb, which opens a portal after the apex. Missing
+// ones: the portal stays dark and the world replays, faster; the shards you have are kept. At the portal you keep
+// some skills for the next world: keep.base, plus one per keep.pearls pearls found in this world, up to keep.max.
+// worldHue: each new world's water is tinted a little further round the colour wheel.
+const SHARDS = { wreckFrom: 0.4, points: 1000, keep: { base: 1, pearls: 10, max: 3 }, worldHue: 0.12 };
 
 // Rare variants of ordinary fish. chance: share of spawns (before Treasure Nose).
 const VARIANT_CHANCE = 0.08;

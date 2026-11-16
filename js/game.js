@@ -1,10 +1,10 @@
 // Gulp! game: the 3D scene, the camera, the player, the fish and the HUD. Loaded last, as a module. The rules
 // (who eats whom, growth, score, spawns, skills, classes) live in rules.js; this file moves things and draws them.
 import * as THREE from 'three';
-import { makeFish, makeIcons, makeZone, waterAt, makeWarn, bubbleTexture, water } from './art.js';
+import { makeFish, makeIcons, makeZone, waterAt, makeWarn, bubbleTexture, water, makeOyster, makePickup, makeWreck, makeShard, makePortal } from './art.js';
 
 const FOV = 45, DEG = Math.PI / 180, TAN = Math.tan(FOV / 2 * DEG);
-const MAX_ASPECT = 1.25; // wider screens get side bars, so a desktop doesn't see far more of the sea than a phone
+const MAX_ASPECT = 2.3; // a phone held sideways fills its screen; only very wide screens get side bars
 const camDist = viewH => viewH / 2 / TAN; // how far the camera sits from what it looks at to show that much of the plane
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 const clampMid = (v, a, b) => (a > b ? (a + b) / 2 : clamp(v, a, b)); // if the range is inside out, sit in the middle
@@ -135,8 +135,8 @@ function updateHud() {
   const combo = G.comboT > 0 && G.combo > 1 ? `×${Math.min(G.combo, G.stats.comboMax)}` : '';
   if (shown.score !== G.score) $('score').textContent = (shown.score = G.score).toLocaleString();
   if (shown.combo !== combo) $('combo').textContent = shown.combo = combo;
-  const where = `${G.zone.name} ${G.index + 1}/${LEVELS_PER_ZONE}`;
-  if (shown.where !== where) $('where').textContent = shown.where = where;
+  const where = `${G.world ? `World ${G.world + 1} \u00B7 ` : ''}${G.zone.name} ${G.index + 1}/${LEVELS_PER_ZONE}`;
+  if (shown.where !== where) $('whereName').textContent = shown.where = where;
   const fill = `${(G.meter / METER_NEED) * 100}%`;
   if (shown.fill !== fill) $('meterFill').style.width = shown.fill = fill;
   if (shown.tier !== P.tier) { shown.tier = P.tier; updateChain(); }
@@ -145,7 +145,10 @@ function updateHud() {
     if (shown.boss !== w) $('bossFill').style.width = shown.boss = w;
   }
   // Once-per-level powers you still have, so you know what's left.
-  const perks = [P.shields && `SPINES ×${P.shields}`, P.gulps && `GULP ×${P.gulps}`, windLeft() && 'SECOND WIND'].filter(Boolean).join(' · ');
+  const perks = [P.power && `${PICKUPS.kinds[P.power.kind].name.toUpperCase()} ${Math.ceil(P.power.t)}s`, P.shields && `SHIELD ×${P.shields}`, P.gulps && `GULP ×${P.gulps}`, windLeft() && 'SECOND WIND'].filter(Boolean).join(' · ');
+  const shards = [...Array(LEVELS_PER_ZONE).keys()].map(i => (G.shards.has(i) ? '\u25C6' : '\u25C7')).join('');
+  const pearls = `\u25C9 ${G.pearls % PEARLS_PER_POINT}/${PEARLS_PER_POINT} \u00B7 ${shards}`; // pearls towards the next bonus skill point, and this world's shards
+  if (shown.pearls !== pearls) $('pearls').textContent = shown.pearls = pearls;
   if (shown.perks !== perks) $('perks').textContent = shown.perks = perks;
   const charge = Math.round(P.charge * 50) / 50; // the boost button fills up like a clock while it recharges
   if (shown.charge !== charge) {
@@ -162,10 +165,12 @@ function updateHud() {
 // phase while playing: 'swim' | 'dying' | 'cleared' (clear card) | 'widen' (camera pulls back) | 'tree' (skill
 // screen up) | 'fadeout' | 'fadein' (into the next level).
 const G = { mode: 'menu', phase: 'swim', level: 1, zone: null, index: 0, spot: null, scenery: null, seed: 0, spawner: null, fish: [], t: 0,
-  spawnT: 0, phaseT: 0, score: 0, combo: 0, comboT: 0, meter: 0, eatenBy: '', points: 0, owned: [], cls: CLASSES[0], stats: computeStats('scamp', []), windUsed: 0 };
+  spawnT: 0, phaseT: 0, score: 0, combo: 0, comboT: 0, meter: 0, eatenBy: '', points: 0, owned: [], cls: CLASSES[0], stats: computeStats('scamp', []), windUsed: 0,
+  oysters: [], pickup: null, pickT: 0, pickRand: null, pearls: 0,
+  world: 0, shards: new Set(), worldPearls: 0, wreck: null, shard: null, portal: null, newWorld: false }; // shards: level indexes (0-4) whose shard you have
 
 const P = { obj: null, x: 0, y: 0, vx: 0, vy: 0, len: fishLen(1), tier: 1, face: 1, pulse: 0, safe: 0, alive: false, phase: 0, gulp: 0, boost: 0, charge: 1,
-  stun: 0, shields: 0, gulps: 0 };
+  stun: 0, shields: 0, gulps: 0, power: null }; // power: the timed power-up you have ({ kind, t })
 G.player = P;
 function setClass(cls) { // a different kind of fish: a new model
   if (P.obj && G.cls === cls) return;
@@ -180,11 +185,32 @@ const windLeft = () => G.stats.secondWind - G.windUsed;
 
 // Build one level: its scenery, its fish, its spawner. You start it at tier 1.
 function startLevel() {
-  const info = levelInfo(G.level);
+  const info = levelInfo(G.level, G.world);
   removeApex();
+  removePortal();
   G.scenery?.dispose();
-  Object.assign(G, { zone: info.zone, index: info.index, spot: info.spot, water: info.spot.water ?? info.zone.water });
-  G.scenery = makeZone(G.zone, G.spot, scene, mulberry32(hashSeed(`${G.zone.key}/${G.index}`)));
+  let spot = info.spot;
+  if (G.world > 0) { // another world's ocean: the same kind of zone, its water tinted round the colour wheel
+    const w = spot.water ?? info.zone.water, hue = c => new THREE.Color(c).offsetHSL(SHARDS.worldHue * G.world, 0, 0).getHex();
+    spot = { ...spot, water: { top: hue(w.top), bottom: hue(w.bottom) } };
+  }
+  Object.assign(G, { zone: info.zone, index: info.index, spot, water: spot.water ?? info.zone.water });
+  // The wreck hiding this level's shard: somewhere out in the wide sea, a different place each run.
+  const wr = mulberry32(hashSeed(`${G.seed}/${G.level}/wreck`)), side = wr() < 0.5 ? -1 : 1;
+  const wreckX = side * Math.min(WORLD.x - 1300, WORLD.x * (SHARDS.wreckFrom + wr() * 0.5));
+  G.scenery = makeZone(G.zone, G.spot, scene, mulberry32(hashSeed(`${G.zone.key}/${G.index}`)), [wreckX]);
+  const wreck = makeWreck(wr);
+  wreck.mesh.position.x = wreckX;
+  G.scenery.group.add(wreck.mesh);
+  G.circles = [...G.scenery.circles, ...wreck.circles.map(c => ({ ...c, x: c.x + wreckX }))]; // rocks and wreckage on the play plane
+  G.wreck = { x: wreckX, y: wreck.shard.y, holes: wreck.holes.map(h => ({ ...h, x: h.x + wreckX })) };
+  G.shard = null;
+  if (G.mode === 'play' && !G.shards.has(G.index)) { // already found on an earlier lap: no shard this time
+    const sh = makeShard();
+    sh.root.position.set(wreckX + wreck.shard.x, wreck.shard.y, 0);
+    G.scenery.group.add(sh.root);
+    G.shard = { x: wreckX + wreck.shard.x, y: wreck.shard.y, ...sh };
+  }
   hemi.color.set(G.zone.sky);
   hemi.groundColor.set(G.zone.ground);
   sun.intensity = G.zone.sun;
@@ -195,8 +221,12 @@ function startLevel() {
   G.meter = 0;
   G.phase = 'swim';
   G.spawnT = 0;
+  placeOysters();
+  removePickup();
+  G.pickRand = mulberry32(hashSeed(`${G.seed}/${G.level}/pickups`));
+  G.pickT = PICKUPS.every * 0.5;
   if (G.mode === 'play') {
-    Object.assign(P, { x: 0, y: 0, vx: 0, vy: 0, tier: 1, safe: PLAYER.safe, stun: 0, shields: G.stats.shields, gulps: G.stats.gulps });
+    Object.assign(P, { x: 0, y: 0, vx: 0, vy: 0, tier: 1, safe: PLAYER.safe, stun: 0, shields: G.stats.shields, gulps: G.stats.gulps, power: null });
     Object.assign(cam, { x: 0, y: 0, yaw: 0 });
   }
   placeCamera();
@@ -221,7 +251,8 @@ const yawFor = face => (face > 0 ? -0.35 : -Math.PI + 0.35); // turned a little 
 function spawnFish(species, x, y, dir, variant = null) {
   const tier = species.tier + (variant === 'giant' ? VARIANTS.giant.tier : 0);
   const f = { s: species, variant, tier, x, y, vx: dir * species.speed, vy: 0, dir, face: dir, len: fishLen(tier) * (species.behavior === 'puff' ? 0.9 : 1),
-    obj: makeFish(species, variant), phase: Math.random() * 6, wob: Math.random() * 6, chase: 0, rest: 0, puff: 0, puffT: -2, warn: null };
+    obj: makeFish(species, variant), phase: Math.random() * 6, wob: Math.random() * 6, chase: 0, rest: 0, puff: 0, puffT: -2, warn: null,
+    baseTier: tier, stun: 0, shrink: 0, sk: 1 }; // stun: Shock power-up; shrink: Shrink power-up (one size smaller), sk: its drawn scale
   f.obj.yaw.rotation.y = yawFor(dir);
   scene.add(f.obj.root);
   G.fish.push(f);
@@ -279,7 +310,7 @@ function pose(e, dt) {
 // Boost: a burst of speed the way you're steering (or facing), then the button recharges.
 const mySpeed = () => PLAYER.speed * G.stats.speed;
 function boost() {
-  if (app.state !== 'playing' || !P.alive || P.charge < 1 || G.phase !== 'swim') return;
+  if (app.state !== 'playing' || !P.alive || P.charge < 1 || !['swim', 'apex'].includes(G.phase)) return; // the apex fight too: boost bites do double damage
   let { x, y } = stick();
   const m = Math.hypot(x, y);
   if (m < 0.2) { x = P.face; y = 0; } else { x /= m; y /= m; }
@@ -306,10 +337,13 @@ function updatePlayer(dt) {
       if (Math.random() < 0.6) burst(P.x - P.vx / v * P.len * 0.5, P.y - P.vy / v * P.len * 0.5, 1, 30); // bubble trail
     } else P.charge = Math.min(1, P.charge + dt / (BOOST.recharge * G.stats.boostRecharge));
     if (P.stun > 0) { P.stun -= dt; speed *= 0.3; } // stung: sluggish for a moment
+    if (P.power && (P.power.t -= dt) <= 0) P.power = null;
+    if (P.power?.kind === 'rush') speed *= PICKUPS.kinds.rush.speed;
     P.vx += (s.x * speed - P.vx) * Math.min(1, dt * turn);
     P.vy += (s.y * speed - P.vy) * Math.min(1, dt * turn);
     P.x = clamp(P.x + P.vx * dt, -WORLD.x + 40, WORLD.x - 40);
     P.y = clamp(P.y + P.vy * dt, -WORLD.y + P.len * 0.25, WORLD.y - P.len * 0.25);
+    pushOut(P, P.len * SHAPE_R[G.cls.spec.shape], G.circles); // rocks: slide along them
   }
   P.len += (fishLen(P.tier) - P.len) * Math.min(1, dt * 4);
   P.pulse = Math.max(0, P.pulse - dt * 5);
@@ -329,6 +363,10 @@ function updateFish(f, dt) {
   const sp = s.speed * mult;
   let tx = f.dir * sp, ty = Math.sin(G.t * 0.8 + f.wob) * sp * 0.25, rate = 2.5;
   const dx = P.x - f.x, dy = P.y - f.y, d = Math.hypot(dx, dy) || 1;
+  if (f.shrink > 0) f.shrink -= dt;
+  if (f.stun > 0) f.stun -= dt;
+  const stunned = f.stun > 0, small = f.shrink > 0 ? 2 : 0;
+  if (s.behavior !== 'puff') f.tier = f.baseTier - small; // shrunk: from one size bigger than you to one size smaller, for a while
   if (s.behavior === 'puff') { // swells up (and becomes dangerous) when you swim close, then slowly shrinks
     f.puffT -= dt;
     if (live && f.puffT <= -1.5 && d < 200 + P.len * 0.5) { f.puffT = 2.6; beep(220, 160, 0.04, 'sine', 2); }
@@ -340,14 +378,15 @@ function updateFish(f, dt) {
     f.obj.spikes.scale.setScalar(Math.max(f.puff, 0.001));
   }
   const flees = s.behavior === 'skittish' || s.behavior === 'school' || f.variant === 'speedy';
-  const clearOff = G.phase === 'widen' || G.phase === 'apex' || G.phase === 'apexdown'; // everyone leaves while the camera widens or the apex is here
-  if ((live && flees && canEat(P, f) && d < TUNING.fleeRange * (f.variant === 'speedy' ? 1.5 : 1)) || clearOff) {
+  const clearOff = ['widen', 'apex', 'apexdown', 'portal'].includes(G.phase); // everyone leaves while the camera widens or the apex is here
+  if ((live && flees && !stunned && canEat(P, f) && d < TUNING.fleeRange * (f.variant === 'speedy' ? 1.5 : 1)) || clearOff) {
     tx = -dx / d * sp * 1.7; // swim away from you
     ty = -dy / d * sp * 1.7;
     rate = 5;
     f.dir = Math.sign(tx) || f.dir;
   }
-  if (s.behavior === 'hunter') {
+  if (s.behavior === 'hunter' && stunned) f.chase = 0;
+  else if (s.behavior === 'hunter') {
     f.rest -= dt;
     const ghosted = G.stats.combos.ghost && P.boost > 0; // Ghost combo: boosting shakes off hunters
     if (f.chase > 0 && live && canEat(f, P) && !ghosted) {
@@ -363,6 +402,13 @@ function updateFish(f, dt) {
       if (!f.warn) scene.add(f.warn = makeWarn());
     } else f.chase = 0;
   }
+  if (stunned) { tx *= 0.1; ty = -30; rate = 3; } // limp: drifting and sinking slowly
+  if (rate < 5) { // calm fish (not fleeing in a panic) swim over or under a rock in their way
+    for (const c of G.circles) {
+      const ax = c.x - f.x, ay = c.y - f.y, reach = c.r + f.len * 0.5 + 160;
+      if (Math.abs(ax) < reach && Math.abs(ay) < reach && ax * tx > 0 && Math.hypot(ax, ay) < reach) ty += (f.y >= c.y ? 1 : -1) * sp * 1.4;
+    }
+  }
   if (f.variant === 'golden' && Math.random() < dt * 4) burst(f.x + (Math.random() - 0.5) * f.len * 0.6, f.y, 1, 25); // sparkle
   f.vx += (tx - f.vx) * Math.min(1, dt * rate);
   f.vy += (ty - f.vy) * Math.min(1, dt * rate);
@@ -370,8 +416,11 @@ function updateFish(f, dt) {
   f.y += f.vy * dt;
   const lim = WORLD.y - f.len * 0.3;
   if (Math.abs(f.y) > lim) { f.y = Math.sign(f.y) * lim; f.vy = 0; }
+  pushOut(f, f.len * SHAPE_R[f.s.shape] * (1 + 0.7 * f.puff), G.circles);
   pose(f, dt);
-  f.obj.root.scale.setScalar(f.len * (1 + 0.7 * f.puff));
+  if (stunned) f.obj.pitch.rotation.x = 1.3; // rolled on its side
+  f.sk += ((small ? 0.55 : 1) - f.sk) * Math.min(1, dt * 6);
+  f.obj.root.scale.setScalar(f.len * (1 + 0.7 * f.puff) * f.sk);
   if (f.warn) {
     f.warn.visible = f.chase > TUNING.chaseTime * G.stats.chase - 1.2; // shows for the first moment of a chase
     f.warn.position.set(f.x, f.y + f.len * 0.5 + 40, 20);
@@ -383,7 +432,7 @@ function updateFish(f, dt) {
 function collide() {
   const myR = P.len * SHAPE_R[G.cls.spec.shape], biteR = P.len * SHAPE_R.oval * G.stats.reach;
   for (const f of [...G.fish]) {
-    const dx = f.x - P.x, dy = f.y - P.y, d = Math.hypot(dx, dy) || 1, fr = f.len * SHAPE_R[f.s.shape] * (1 + 0.7 * f.puff);
+    const dx = f.x - P.x, dy = f.y - P.y, d = Math.hypot(dx, dy) || 1, fr = f.len * SHAPE_R[f.s.shape] * (1 + 0.7 * f.puff) * f.sk;
     const torpedo = G.stats.torpedo && P.boost > 0 && f.tier === P.tier, gulp = P.gulps > 0 && f.tier === P.tier + 1 && f.s.behavior !== 'puff';
     if ((canEat(P, f) || torpedo) && d < biteR * 1.15 + fr * 0.8) eat(f);
     else if (gulp && d < biteR * 1.15 + fr * 0.6) { P.gulps--; popup('GULP!', P.x, P.y + P.len, 'combo'); eat(f); }
@@ -460,10 +509,128 @@ function die(f) {
   buzz(250);
 }
 
+// ---------- Oysters and pearls ----------
+// A few oysters sit on the sea floor, away from rocks and from where you start. Each one opens to show a pearl,
+// shivers, and snaps shut: grab the pearl while it's open. A small you caught in the snap is eaten; a bigger you
+// gets pinched.
+function placeOysters() {
+  for (const o of G.oysters) scene.remove(o.obj.root);
+  G.oysters = [];
+  const rand = mulberry32(hashSeed(`${G.seed}/${G.level}/oysters`)), size = OYSTER.size, y = -WORLD.y - 12;
+  for (let i = 0; i < OYSTER.perLevel; i++) {
+    let x = 0;
+    for (let k = 0; k < 30; k++) { // somewhere clear of rocks, not right where you start
+      x = (rand() * 2 - 1) * (WORLD.x - 600);
+      if (Math.abs(x) > 700 && G.circles.every(c => Math.abs(c.x - x) > c.r + size || c.y > y + c.r + size)) break;
+    }
+    const obj = makeOyster();
+    obj.root.position.set(x, y, 0);
+    obj.root.scale.setScalar(size);
+    scene.add(obj.root);
+    const black = rand() < OYSTER.blackChance;
+    obj.setBlack(black);
+    G.oysters.push({ obj, x, y, t: rand() * 6, mode: 'closed', has: true, black, regrow: 0, rand });
+  }
+}
+function updateOysters(dt, live) {
+  const size = OYSTER.size, open = G.stats.oysterOpen ?? 1;
+  for (const o of G.oysters) {
+    o.t += dt;
+    const mode = oysterPhase(o.t, open), lid = o.obj.hinge.rotation;
+    const want = mode === 'open' || mode === 'tell' ? -0.95 : 0;
+    lid.x += (want - lid.x) * Math.min(1, dt * (mode === 'snap' ? 30 : 4));
+    if (mode === 'tell') lid.x += Math.sin(G.t * 70) * 0.05; // the shiver: it's about to snap
+    if (!o.has && (o.regrow -= dt) <= 0 && mode === 'closed') { // a new pearl grows inside
+      o.has = true;
+      o.black = o.rand() < OYSTER.blackChance;
+      o.obj.setBlack(o.black);
+    }
+    o.obj.pearl.visible = o.has;
+    const pr = P.len * SHAPE_R[G.cls.spec.shape];
+    if (live && o.has && (mode === 'open' || mode === 'tell') && Math.hypot(P.x - o.x, P.y - (o.y + size * 0.25)) < pr + size * 0.14) takePearl(o);
+    if (live && mode === 'snap' && o.mode !== 'snap' && P.safe <= 0 && Math.abs(P.x - o.x) < size * 0.45 + pr * 0.3 && P.y - o.y < size * 0.3 + pr * 0.5) snapOn(o);
+    o.mode = mode;
+  }
+}
+function takePearl(o) {
+  o.has = false;
+  o.regrow = OYSTER.regrow;
+  const n = pearlCount(o.black) * (G.stats.pearlMul ?? 1), pts = pearlPoints(o.black, G.level), before = Math.floor(G.pearls / PEARLS_PER_POINT);
+  G.pearls += n;
+  G.worldPearls += n;
+  G.score += pts;
+  popup(`${o.black ? 'BLACK PEARL' : 'PEARL'} +${pts}`, o.x, o.y + OYSTER.size * 0.6, 'gold');
+  burst(o.x, o.y + OYSTER.size * 0.3, 14, 150);
+  jingle(o.black ? [988, 1319, 1568, 2093] : [1319, 1760], 70);
+  buzz(20);
+  const gained = Math.floor(G.pearls / PEARLS_PER_POINT) - before;
+  if (gained > 0) { // every few pearls: a bonus skill point
+    G.points += gained;
+    popup(`+${gained} SKILL POINT${gained > 1 ? 'S' : ''}`, P.x, P.y + P.len * 1.4, 'combo');
+  }
+}
+function snapOn(o) {
+  beep(120, 160, 0.08, 'square', 0.5);
+  boom(200, 0.08);
+  if (P.tier <= OYSTER.catchTier && !G.stats.oysterProof) { bitten({ s: { name: 'oyster' }, x: o.x, y: o.y }); return; }
+  P.stun = OYSTER.pinch * G.stats.stun; // too big to swallow: just a nasty pinch
+  P.vy = 520;
+  popup('PINCHED!', P.x, P.y + P.len * 0.8, 'ouch');
+  buzz(60);
+}
+
+// ---------- Power-ups ----------
+// A bubble drifts down from the top of the view now and then; swim into it to take it.
+function spawnPickup(kind, x, y) {
+  removePickup();
+  const r = G.pickRand ?? Math.random;
+  x ??= clamp(P.x + (r() - 0.5) * 0.7 * (view.x1 - view.x0), -WORLD.x + 200, WORLD.x - 200);
+  y ??= Math.min(view.y1 - 60, WORLD.y - 80);
+  const obj = makePickup(kind);
+  obj.position.set(x, y, 0);
+  scene.add(obj);
+  G.pickup = { kind, x, y, t: PICKUPS.life, obj };
+  return G.pickup;
+}
+function removePickup() {
+  if (G.pickup) scene.remove(G.pickup.obj);
+  G.pickup = null;
+}
+function updatePickup(dt) {
+  if (G.phase === 'swim' && !G.pickup && (G.pickT -= dt) <= 0) {
+    G.pickT = PICKUPS.every;
+    spawnPickup(rollPickup(G.pickRand));
+  }
+  const p = G.pickup;
+  if (!p) return;
+  p.t -= dt;
+  p.y -= PICKUPS.fall * dt;
+  p.x += Math.sin(G.t * 1.3) * 25 * dt;
+  p.obj.position.set(p.x, p.y, 0);
+  p.obj.visible = p.t > 2 || G.t * 6 % 1 < 0.6; // blinks before it pops
+  if (p.t <= 0 || p.y < -WORLD.y + 40) { burst(p.x, p.y, 10, 100); removePickup(); return; }
+  if (P.alive && G.phase === 'swim' && Math.hypot(P.x - p.x, P.y - p.y) < P.len * 0.35 + 48) takePickup(p);
+}
+function takePickup(p) {
+  const k = PICKUPS.kinds[p.kind];
+  removePickup();
+  popup(k.name.toUpperCase(), P.x, P.y + P.len, 'combo');
+  jingle([784, 1047, 1319], 60);
+  burst(P.x, P.y, 18, 220);
+  buzz(40);
+  if (k.time) P.power = { kind: p.kind, t: k.time };
+  if (p.kind === 'shock') { // fish near you go limp
+    boom(300, 0.08);
+    for (const f of G.fish) if (Math.hypot(f.x - P.x, f.y - P.y) < k.range) { f.stun = k.time; f.chase = 0; f.rest = Math.max(f.rest, k.time); }
+  } else if (p.kind === 'shrink') { // fish one size bigger than you shrink into food
+    for (const f of G.fish) if (f.baseTier === P.tier + 1 && f.s.behavior !== 'puff' && f.x > view.x0 - 200 && f.x < view.x1 + 200) f.shrink = k.time;
+  } else if (p.kind === 'shield') P.shields++;
+}
+
 // ---------- Between levels ----------
 // The meter is full: a clear card, then the camera pulls back while you stay the same size (the view widens),
 // then the skill tree, then a fade into the next level, where you're a tier-1 fish among bigger ones.
-function levelCleared(title = 'LEVEL CLEAR!') {
+function levelCleared(title = 'LEVEL CLEAR!', note = '') {
   const bonus = CLEAR_BONUS * G.level;
   G.score += bonus;
   G.points += 1;
@@ -473,7 +640,8 @@ function levelCleared(title = 'LEVEL CLEAR!') {
   P.safe = 99;
   P.boost = 0;
   noteProgress({ level: G.level + 1, score: G.score });
-  banner(title, `+${bonus.toLocaleString()} · +1 skill point`, CLEAR_T * 1000);
+  banner(title, `+${bonus.toLocaleString()} · +1 skill point${note}`, (CLEAR_T + (note ? 1.5 : 0)) * 1000);
+  if (note) G.phaseT += 1.5; // time to read it
   burst(P.x, P.y, 40, 320);
   jingle([523, 659, 784, 1047, 1319], 110);
   buzz(120);
@@ -492,6 +660,7 @@ function startApex() {
     x: P.x + side * ((view.x1 - view.x0) / 2 + len * 0.6), y: clamp(P.y + 150, -WORLD.y + len * 0.2, WORLD.y - len * 0.2),
     vx: -side * 400, vy: 0, face: -side, ang: Math.atan2(150, side * 600), spin: Math.random() < 0.5 ? 1 : -1 };
   G.phase = 'apex';
+  removePickup();
   Object.assign(P, { tier: 3, safe: 1.5, boost: 0 });
   banner(a.name.toUpperCase(), `"${a.intro}"`, 3200);
   $('bossName').textContent = a.name;
@@ -574,6 +743,7 @@ function updateApex(dt) {
   const lim = WORLD.y - A.len * 0.12; // stays in the water and near the play area
   if (Math.abs(A.y) > lim) { A.y = Math.sign(A.y) * lim; A.vy *= -0.3; }
   if (Math.abs(A.x) > WORLD.x + 300) { A.x = Math.sign(A.x) * (WORLD.x + 300); A.vx *= -0.3; }
+  pushOut(A, A.len * 0.11, G.circles);
   pose(A, dt);
   if (A.mode === 'tell') A.obj.root.position.set(A.x + (Math.random() - 0.5) * A.len * 0.03, A.y + (Math.random() - 0.5) * A.len * 0.03, 0); // the shake
   A.obj.root.scale.setScalar(A.len);
@@ -623,6 +793,7 @@ function biteApex(A) {
   } else if (A.mode === 'circle') A.t = Math.min(A.t, 0.8); // it strikes back soon
 }
 function apexDefeated(A) {
+  noteProgress({ apex: true });
   const bonus = APEX.bonus * G.level;
   G.score += bonus;
   G.points += 1; // a bonus point; levelCleared adds the level's own point too
@@ -640,6 +811,75 @@ function apexDefeated(A) {
   $('boss').hidden = true;
 }
 
+// ---------- Shards, the orb and the portal ----------
+// The shard glints once you're close; touch it to take it.
+function updateShard(dt, live) {
+  const sh = G.shard;
+  if (!sh) return;
+  const d = Math.hypot(P.x - sh.x, P.y - sh.y);
+  sh.gem.rotation.y += dt * 1.5;
+  sh.glint.visible = G.mode === 'play' && d < 1100 && G.t * 3 % 1 < 0.75;
+  if (live && d < P.len * SHAPE_R[G.cls.spec.shape] + 45) {
+    G.shards.add(G.index);
+    G.scenery.group.remove(sh.root);
+    G.shard = null;
+    const pts = SHARDS.points * G.level, n = G.shards.size;
+    G.score += pts;
+    banner(`SHARD ${n}/${LEVELS_PER_ZONE}`, n >= LEVELS_PER_ZONE ? 'The orb is whole! Beat the apex to open the portal.' : `+${pts.toLocaleString()} · find them all to open the portal`, 2200);
+    burst(sh.x, sh.y, 30, 260);
+    jingle([659, 988, 1319, 1760], 80);
+    buzz(80);
+  }
+}
+// After the apex: with all five shards the orb opens a portal; without them the portal stays dark and the world
+// starts over (faster), keeping the shards you found.
+function worldEnd() {
+  const n = G.shards.size;
+  if (n < LEVELS_PER_ZONE) return levelCleared('ZONE CLEAR!', ` · the portal is dark: ${n}/${LEVELS_PER_ZONE} shards`);
+  G.phase = 'portal';
+  const side = P.x > 0 ? -1 : 1, x = clamp(P.x + side * Math.min(520, (view.x1 - view.x0) * 0.3), -WORLD.x + 300, WORLD.x - 300), y = clamp(P.y + 120, -WORLD.y + 400, WORLD.y - 400);
+  const obj = makePortal();
+  obj.root.position.set(x, y, 0);
+  obj.root.scale.setScalar(170);
+  scene.add(obj.root);
+  G.portal = { x, y, ...obj };
+  banner('THE ORB IS WHOLE!', 'A portal opens. Swim into it!', 3000);
+  jingle([523, 659, 784, 1047, 1319, 1568, 2093], 90);
+  boom(800, 0.1);
+}
+function removePortal() {
+  if (G.portal) scene.remove(G.portal.root);
+  G.portal = null;
+}
+function updatePortal(dt) {
+  const pt = G.portal;
+  pt.swirl.rotation.z -= dt * 2.5;
+  pt.orb.scale.setScalar(1 + Math.sin(G.t * 5) * 0.15);
+  pt.root.rotation.y = Math.sin(G.t * 0.8) * 0.3;
+  if (Math.random() < dt * 20) burst(pt.x + (Math.random() - 0.5) * 300, pt.y + (Math.random() - 0.5) * 300, 1, 40);
+  if (G.phase === 'portal' && P.alive && Math.hypot(P.x - pt.x, P.y - pt.y) < 150) { // in you go: choose what to keep
+    G.phase = 'keep';
+    noteProgress({ portal: true });
+    burst(P.x, P.y, 40, 300);
+    jingle([1047, 1319, 1568, 2093], 70);
+    openKeep(keepCount(G.worldPearls));
+  }
+}
+// Called by the keep screen: through the portal into the next world with the skills you kept. Your size, the tree
+// and the shards reset; the score, your unspent points and your class carry on.
+function enterWorld(kept = []) {
+  if (G.phase !== 'keep') return;
+  const free = G.cls.free ? [G.cls.free] : [];
+  G.owned = [...new Set([...free, ...kept.filter(id => G.owned.includes(id))])];
+  G.stats = computeStats(G.cls.key, G.owned);
+  Object.assign(G, { world: G.world + 1, shards: new Set(), worldPearls: 0, newWorld: true, windUsed: 0 });
+  G.score += CLEAR_BONUS * G.level;
+  G.points += 1; // the level's own point
+  removePortal();
+  G.phase = 'fadeout';
+  G.phaseT = FADE_OUT_T;
+}
+
 // Called by the skill tree's "Next level" button.
 function nextLevel() {
   if (G.phase !== 'tree') return;
@@ -650,13 +890,14 @@ function nextLevel() {
 // by the same factor, so on screen nothing jumps.
 function swapLevel() {
   G.level++;
-  const len = P.len / LEVEL_SCALE;
-  cam.dist /= LEVEL_SCALE; // before startLevel, so the new fish fill the view you'll actually see
+  const len = G.newWorld ? fishLen(1) : P.len / LEVEL_SCALE; // through a portal you start small again
+  cam.dist = G.newWorld ? camDist(VIEW_H[1]) : cam.dist / LEVEL_SCALE; // before startLevel, so the new fish fill the view you'll actually see
   startLevel();
   P.len = len;
   G.phase = 'fadein';
   G.phaseT = FADE_IN_T;
-  banner(G.zone.name.toUpperCase(), `Level ${G.index + 1}/${LEVELS_PER_ZONE} · ${G.spot.name}`, 2200);
+  banner(G.newWorld ? `WORLD ${G.world + 1}` : G.zone.name.toUpperCase(), `${G.newWorld ? `${G.zone.name} · ` : ''}Level ${G.index + 1}/${LEVELS_PER_ZONE} · ${G.spot.name}`, 2200);
+  G.newWorld = false;
   jingle([392, 523, 659], 110);
 }
 // Spend skill points (from the tree screen). Returns true if it worked.
@@ -677,13 +918,17 @@ function update(dt) {
   for (const f of [...G.fish]) updateFish(f, dt);
   if (G.apex) updateApex(dt);
   if (play && P.alive && G.phase === 'swim') collide();
+  updateOysters(dt, play && P.alive && G.phase === 'swim');
+  updateShard(dt, play && P.alive && G.phase === 'swim');
+  if (G.portal) updatePortal(dt);
+  if (play) updatePickup(dt);
   if (play) { // the camera follows you (looking a little ahead), swings with your swimming and pulls back as you grow
     const k = Math.min(1, dt * 4), widen = G.phase === 'widen' || G.phase === 'fadeout', fight = G.phase === 'apex' || G.phase === 'apexdown';
     const viewTo = widen ? VIEW_H[1] * LEVEL_SCALE : fight ? VIEW_H[3] * APEX.view : VIEW_H[P.tier];
     cam.dist += (camDist(viewTo) - cam.dist) * Math.min(1, dt * (widen ? 2.6 : 2));
     const hw = (view.x1 - view.x0) / 2, below = cam.y - view.y0, above = view.y1 - cam.y, lim = widen ? Infinity : 1;
     cam.x += (clampMid(P.x + P.vx * CAMERA.lead, -WORLD.x * lim - 100 + hw, WORLD.x * lim + 100 - hw) - cam.x) * k;
-    cam.y += (clampMid(P.y + P.vy * CAMERA.lead, -WORLD.y * lim - 160 + below, WORLD.y * lim + 160 - above) - cam.y) * k;
+    cam.y += (clampMid(P.y + P.vy * CAMERA.lead, -WORLD.y * lim - 160 + below, WORLD.y * lim + (view.y1 - view.y0) * 0.2 - above) - cam.y) * k; // room above the surface for the HUD, so you're never under it
     cam.yaw += (-P.vx / PLAYER.speed * CAMERA.sway * DEG - cam.yaw) * Math.min(1, dt * 1.5);
   }
   placeCamera();
@@ -693,12 +938,12 @@ function update(dt) {
   if (G.spawnT <= 0 && G.fish.length < TUNING.population && ['swim', 'dying', 'fadein'].includes(G.phase)) { spawn(); G.spawnT = TUNING.spawnEvery; }
   G.comboT -= dt;
   if (G.phaseT > 0 && (G.phaseT -= dt) <= 0) {
-    if (G.phase === 'dying') runOver({ score: G.score, level: G.level, eatenBy: G.eatenBy });
+    if (G.phase === 'dying') runOver({ score: G.score, level: G.level, eatenBy: G.eatenBy, world: G.world + 1, shards: G.shards.size });
     else if (G.phase === 'cleared') { G.phase = 'widen'; G.phaseT = WIDEN_T; }
     else if (G.phase === 'widen') { G.phase = 'tree'; openTree(); }
     else if (G.phase === 'fadeout') swapLevel();
     else if (G.phase === 'fadein') G.phase = 'swim';
-    else if (G.phase === 'apexdown') { removeApex(); levelCleared('ZONE CLEAR!'); }
+    else if (G.phase === 'apexdown') { removeApex(); worldEnd(); }
   }
   $('fade').style.opacity = G.phase === 'fadeout' ? 1 - G.phaseT / FADE_OUT_T : G.phase === 'fadein' ? G.phaseT / FADE_IN_T : 0;
   if (bannerTimer > 0 && (bannerTimer -= dt) <= 0) $('banner').hidden = true;
@@ -716,7 +961,7 @@ function render() { renderer.render(scene, camera); }
 // ---------- Called by the menus (ui.js) ----------
 function startRun(seed = Math.floor(Math.random() * 1e9), classKey = 'scamp') {
   setClass(CLASSES.find(c => c.key === classKey) ?? CLASSES[0]);
-  Object.assign(G, { mode: 'play', seed, level: 1, score: 0, combo: 0, comboT: 0, points: 0, windUsed: 0, owned: G.cls.free ? [G.cls.free] : [] });
+  Object.assign(G, { mode: 'play', seed, level: 1, score: 0, combo: 0, comboT: 0, points: 0, windUsed: 0, pearls: 0, world: 0, shards: new Set(), worldPearls: 0, newWorld: false, owned: G.cls.free ? [G.cls.free] : [] });
   G.stats = computeStats(G.cls.key, G.owned);
   Object.assign(P, { alive: true, gulp: 0, len: fishLen(1), pulse: 0, face: 1, boost: 0, charge: 1 });
   P.obj.root.visible = true;
@@ -735,6 +980,7 @@ function toMenu() {
   $('fade').style.opacity = 0;
   G.level = 1 + Math.floor(Math.random() * LEVELS_PER_ZONE); // a different reef spot behind the menu each time
   G.seed = 'menu';
+  G.world = 0;
   G.stats = computeStats('scamp', []);
   startLevel();
 }
@@ -742,8 +988,8 @@ function toMenu() {
 let last = 0;
 window.game = {
   manual: false, // the playtest sets this and steps the game itself
-  startRun, toMenu, update, render, spawnFish, speciesAt, boost, nextLevel, buy, G, camera, icons,
-  get info() { return { score: G.score, level: G.level, zone: G.zone.name, index: G.index, spot: G.spot.name, tier: P.tier, points: G.points, owned: G.owned, stats: G.stats }; },
+  startRun, toMenu, update, render, spawnFish, speciesAt, boost, nextLevel, buy, spawnPickup, enterWorld, G, camera, icons,
+  get info() { return { score: G.score, level: G.level, world: G.world, shards: G.shards.size, worldPearls: G.worldPearls, zone: G.zone.name, index: G.index, spot: G.spot.name, tier: P.tier, points: G.points, owned: G.owned, stats: G.stats, free: G.cls.free }; },
 };
 addEventListener('resize', resize);
 resize();

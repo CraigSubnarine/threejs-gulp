@@ -40,15 +40,40 @@ function levelFish(zone, index) {
 // One species as it is on a level: its tier there, and how big a puffer gets when it puffs up.
 const atLevel = (f, index) => ({ ...f, tier: f.rank - RANKS_PER_LEVEL * index, puffTo: f.puffBy && f.rank - RANKS_PER_LEVEL * index + f.puffBy });
 
+// Obstacles are circles on the play plane. pushOut moves something round (e: x, y, vx, vy; radius r) out of any
+// circle it overlaps and takes away the part of its velocity heading into it, so it slides along the rock instead.
+// Returns true if it touched one.
+function pushOut(e, r, circles) {
+  let hit = false;
+  for (let pass = 0, moved = true; moved && pass < 6; pass++) { // a few passes: in the notch between two rocks, leaving one can push you into the other
+    moved = false;
+    for (const c of circles) {
+      const dx = e.x - c.x, dy = e.y - c.y, min = r + c.r;
+      if (Math.abs(dx) >= min || Math.abs(dy) >= min) continue;
+      const d = Math.hypot(dx, dy);
+      if (d >= min) continue;
+      const nx = d ? dx / d : 0, ny = d ? dy / d : 1;
+      e.x = c.x + nx * min;
+      e.y = c.y + ny * min;
+      const into = e.vx * nx + e.vy * ny;
+      if (into < 0) { e.vx -= into * nx; e.vy -= into * ny; }
+      hit = moved = true;
+    }
+  }
+  return hit;
+}
+
 // The fish speed multiplier at a level (later levels are faster).
 const speedAt = level => 1 + TUNING.harder * (level - 1);
 
-// Which zone and spot a run level is: 5 levels per zone; after the last zone the zones loop (harder each time).
-function levelInfo(level) {
-  const i = level - 1, z = Math.floor(i / LEVELS_PER_ZONE);
-  const zone = ZONES[z % ZONES.length];
-  return { zone, index: i % LEVELS_PER_ZONE, spot: zone.levels[i % LEVELS_PER_ZONE], loop: Math.floor(z / ZONES.length) };
+// Which zone and spot a run level is. Every 5 levels make a lap of a world; the world (how many portals you've been
+// through) picks the zone, so a lap without all 5 shards replays the same zone. loop: laps so far (apexes get tougher).
+function levelInfo(level, world = 0) {
+  const i = level - 1, zone = ZONES[world % ZONES.length];
+  return { zone, index: i % LEVELS_PER_ZONE, spot: zone.levels[i % LEVELS_PER_ZONE], loop: Math.floor(i / LEVELS_PER_ZONE) };
 }
+// How many skills you keep through a portal: more for the pearls you found in that world.
+const keepCount = pearls => Math.min(SHARDS.keep.max, SHARDS.keep.base + Math.floor(pearls / SHARDS.keep.pearls));
 
 // The spawner: which fish comes next, from where, and whether it's a rare variant. Its own seeded generator, so
 // a seed always gives the same sea; how fish then behave is left to Math.random. It picks from the level's window
@@ -82,6 +107,24 @@ function makeSpawner(seed, zone, spot = {}, index = 0) {
   };
 }
 
+// ---------- Oysters, pearls and power-ups ----------
+// Where an oyster is in its cycle, t seconds in: 'closed' | 'open' (pearl showing) | 'tell' (shivering) | 'snap'.
+// openMul stretches the open part (Pearl Diver).
+function oysterPhase(t, openMul = 1) {
+  const o = OYSTER, open = o.open * openMul, cycle = o.closed + open + o.tell + o.snap;
+  t = ((t % cycle) + cycle) % cycle;
+  return t < o.closed ? 'closed' : t < o.closed + open ? 'open' : t < o.closed + open + o.tell ? 'tell' : 'snap';
+}
+const pearlPoints = (black, level) => (black ? OYSTER.black : OYSTER.white) * level;
+const pearlCount = black => (black ? OYSTER.blackPearls : 1);
+// Which power-up comes next (weighted by w), from its own seeded generator.
+function rollPickup(rand) {
+  const kinds = Object.entries(PICKUPS.kinds), total = kinds.reduce((a, [, k]) => a + k.w, 0);
+  let r = rand() * total;
+  for (const [key, k] of kinds) if ((r -= k.w) < 0) return key;
+  return kinds[kinds.length - 1][0];
+}
+
 // ---------- Apex predators ----------
 // Where something round (you: px, py, radius pr) touches a long fish whose body runs along its heading (hx, hy, a
 // unit vector) from tail to head, centred on (ax, ay). Returns null (not touching), 'tail' (the back part: you
@@ -103,6 +146,7 @@ const nodeCost = i => i + 1;                                  // node n costs n 
 const findNode = id => { const b = SKILLS.find(s => id.startsWith(s.key)); return b && { branch: b, i: Number(id.slice(b.key.length)) - 1 }; };
 // You can buy a node if you don't own it, own the one before it in its branch, and have the points.
 const canBuy = (owned, branch, i, points) => !owned.includes(nodeId(branch, i)) && (i === 0 || owned.includes(nodeId(branch, i - 1))) && points >= nodeCost(i);
+const skillName = id => { const n = findNode(id); return n ? n.branch.nodes[n.i].name : id; };
 const combosFor = owned => COMBOS.filter(c => c.needs.every(n => owned.includes(n)));
 
 // Your stats, rebuilt from scratch from your class and the nodes you own (so stacking can't drift).

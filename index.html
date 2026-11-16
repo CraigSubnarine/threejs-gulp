@@ -43,7 +43,7 @@
   .top { display: flex; align-items: baseline; gap: 10px; min-height: 48px; }
   #score { font-family: "Lilita One", sans-serif; font-size: 1.9rem; line-height: 48px; }
   #combo { font-family: "Lilita One", sans-serif; font-size: 1.4rem; color: #ffe066; }
-  #where { margin-left: auto; font-weight: 800; font-size: .9rem; opacity: .9; text-align: right; }
+  #where { margin-left: auto; align-self: center; font-weight: 800; font-size: .9rem; line-height: 1.25; opacity: .95; text-align: right; }
   #chain { display: flex; gap: 6px; margin-top: 2px; }
   .chip { position: relative; height: 40px; padding: 0 3px; border-radius: 12px; background: rgb(255 255 255 / .2); border: 3px solid transparent; display: flex; align-items: center; justify-content: center; transition: border-color .3s, background .3s, opacity .3s; }
   .chip img { width: 33px; height: 22px; margin: 0 -3px; }
@@ -74,6 +74,8 @@
   #bossFill { position: absolute; inset: 0 auto 0 0; width: 100%; background: linear-gradient(90deg, #ff3b3b, #ff8a5c); transition: width .25s; }
   /* An apex's taunt, floating up from it like a speech bubble. */
   .pop.taunt { font-family: Nunito, sans-serif; font-weight: 800; font-size: 1rem; color: var(--text); background: #fff; padding: 6px 12px; border-radius: 14px; text-shadow: none; box-shadow: 0 3px 0 rgb(0 30 50 / .3); white-space: nowrap; animation-duration: 2.8s; }
+  #where b { display: block; font-weight: 800; }
+  #where small { display: block; font-size: .8rem; line-height: 1.2; color: #e9f8ff; }
   #perks { margin-top: 4px; font-size: .75rem; font-weight: 800; letter-spacing: .04em; color: #ffe8a8; min-height: 1em; }
   /* The fade between levels. */
   #fade { position: fixed; inset: 0; z-index: 1; background: #0b3a52; opacity: 0; pointer-events: none; }
@@ -98,6 +100,27 @@
   .node.sel { outline: 3px solid var(--text); outline-offset: 1px; }
   #treeCombos { font-size: .8rem; text-align: left; color: var(--muted); display: flex; flex-direction: column; gap: 3px; }
   #treeCombos .on { color: var(--good); }
+  /* The keep screen: your skills as toggles. */
+  #keepList { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+  .keepSkill { padding: 0 14px; border: 3px solid transparent; }
+  .keepSkill.on { border-color: #8a3fff; background: #efe2ff; }
+  /* A phone held sideways: a short screen, so a slimmer HUD and smaller buttons leave room to see the sea. */
+  @media (max-height: 520px) {
+    #hud { padding-top: max(4px, env(safe-area-inset-top)); }
+    .top { min-height: 34px; }
+    #score { font-size: 1.4rem; line-height: 34px; }
+    .chip { height: 28px; border-width: 2px; }
+    .chip img { width: 26px; height: 17px; }
+    .chip i { bottom: -6px; font-size: .65rem; }
+    #meterRow, #boss { margin-top: 4px; }
+    #meter { height: 10px; }
+    #bannerTitle { font-size: 1.9rem; }
+    #banner { top: 26%; }
+    #boostBtn { width: 66px; height: 66px; }
+    .screen { padding: 14px; gap: 8px; }
+    h1 { font-size: 2.6rem; }
+    #chain, #meterRow, #boss, #perks { max-width: 60%; }
+  }
   @keyframes rise { to { transform: translate(-50%, -160%); opacity: 0; } }
   /* The floating joystick: a ring where your thumb went down and a knob that follows it. */
   #stick { position: fixed; z-index: 1; width: 112px; height: 112px; margin: -56px 0 0 -56px; border-radius: 50%; border: 3px solid rgb(255 255 255 / .35); background: rgb(255 255 255 / .08); pointer-events: none; }
@@ -123,7 +146,7 @@
 </head>
 <body>
 <div id="hud" hidden>
-  <div class="top"><span id="score">0</span><span id="combo"></span><span id="where"></span></div>
+  <div class="top"><span id="score">0</span><span id="combo"></span><span id="where"><b id="whereName"></b><small id="pearls" title="Pearls towards your next bonus skill point"></small></span></div>
   <div id="chain"></div>
   <div id="meterRow"><div id="meter"><i id="meterFill"></i><s style="left:33.3%"></s><s style="left:66.6%"></s></div></div>
   <div id="boss" hidden><span id="bossName"></span><div id="bossBar"><i id="bossFill"></i></div></div>
@@ -152,6 +175,8 @@
     <label class="row">Vibration <input type="checkbox" id="vibrate"></label>
     <p class="hint"><b>Phone:</b> touch anywhere and drag, like a joystick. The further you drag, the faster you swim. Tap <b>BOOST</b> (bottom right) for a burst of speed; it takes a few seconds to recharge. <b>Computer:</b> your fish follows the mouse, or use the arrow keys or WASD. Click or press Space to boost.</p>
     <p class="hint">The bar at the top shows what you can eat (green) and what can eat you (red). Eat to fill your meter: you grow at each mark, and a full meter clears the level. One bite from a bigger fish and the run is over.</p>
+    <p class="hint"><b>Oysters</b> on the sea floor open to show a pearl: grab it before the shell snaps shut (while you're small, the snap eats you). Every 5 pearls give a bonus skill point. <b>Bubbles</b> drifting down hold power-ups: Shock, Shrink, Rush and Bubble Shield.</p>
+    <p class="hint">Each level hides a <b>shard</b> in a wreck out in the wide sea. Find all five before the apex and they make an orb that opens a <b>portal</b> to another world's ocean: you start small again but keep some skills. Miss one and the world starts over, faster.</p>
     <p class="hint">At the end of a zone its <b>apex predator</b> shows up. Bite its <b>tail</b> (boost into it for a double bite) and stay away from its <b>jaws</b>. When it shakes and a red "!" appears, it's about to lunge; right after a lunge it slows down, so that's your chance.</p>
     <button data-action="back">Back</button>
   </section>
@@ -172,6 +197,13 @@
     <button class="primary" data-action="learn" id="learnBtn" hidden>Learn</button>
     <button data-action="next" id="treeNext">Next level</button>
     <div id="treeCombos"></div>
+  </section>
+
+  <section class="screen" id="keep" hidden>
+    <h2>THROUGH THE PORTAL</h2>
+    <p id="keepInfo"></p>
+    <div id="keepList"></div>
+    <button class="primary" data-action="dive">Dive in</button>
   </section>
 
   <section class="screen" id="over" hidden>

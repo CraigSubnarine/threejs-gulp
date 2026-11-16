@@ -61,9 +61,13 @@ for (const z of ZONES) {
     check(`${z.name} level ${i + 1}: the fish you could eat are still food, plus new bigger ones`, kept && fresh.length >= 2, `new: ${fresh.map(f => f.name).join(', ')}`);
   }
 }
-const l1 = levelInfo(1), l5 = levelInfo(5), l6 = levelInfo(6);
-check('levels 1-5 are the first zone in order, level 6 starts the next zone', l1.index === 0 && l5.index === 4 && l5.zone === ZONES[0] && l6.index === 0
-  && (ZONES.length > 1 ? l6.zone === ZONES[1] : l6.loop === 1));
+const l1 = levelInfo(1), l5 = levelInfo(5), l6 = levelInfo(6), w2 = levelInfo(6, 1);
+check('levels 1-5 are a lap of the first world; level 6 starts the next lap', l1.index === 0 && l5.index === 4 && l5.zone === ZONES[0] && l6.index === 0 && l6.loop === 1 && l1.loop === 0);
+check('without the portal, the next lap is the same world; through it, the next world', l6.zone === ZONES[0] && w2.zone === ZONES[1 % ZONES.length]);
+{
+  const keepCount = vm.runInThisContext('keepCount');
+  check('you keep 1 skill through a portal, more with pearls, up to 3', keepCount(0) === 1 && keepCount(9) === 1 && keepCount(10) === 2 && keepCount(20) === 3 && keepCount(99) === 3);
+}
 
 // ---------- Spawner ----------
 const reef = ZONES[0];
@@ -113,6 +117,41 @@ check('schools come in groups', a.filter(x => x.species.group && !x.variant).eve
   check('2 phases: the second starts at half health', apexPhase(6, 6, 2) === 0 && apexPhase(4, 6, 2) === 0 && apexPhase(3, 6, 2) === 1 && apexPhase(0, 6, 2) === 1);
   check('3 phases split the bar in thirds', apexPhase(7, 9, 3) === 0 && apexPhase(6, 9, 3) === 1 && apexPhase(3, 9, 3) === 2);
   check('apexes get tougher each time round', apexHp({ hp: 6 }, 0) === 6 && apexHp({ hp: 6 }, 1) === 9);
+}
+
+// ---------- Obstacles ----------
+{
+  const [pushOut, WORLD, OBSTACLES] = ['pushOut', 'WORLD', 'OBSTACLES'].map(n => vm.runInThisContext(n));
+  check('the sea is at least 3× wider than it was (2200 half-width)', WORLD.x >= 6600);
+  const rocks = [{ x: 0, y: 0, r: 100 }, { x: 150, y: 0, r: 60 }];
+  let worst = Infinity;
+  for (let i = 0; i < 2000; i++) { // drop things all over the rocks: none may stay inside one
+    const e = { x: Math.random() * 500 - 250, y: Math.random() * 400 - 200, vx: 0, vy: 0 }, r = 20;
+    pushOut(e, r, rocks);
+    worst = Math.min(worst, ...rocks.map(c => Math.hypot(e.x - c.x, e.y - c.y) - (c.r + r)));
+  }
+  check('pushOut never leaves anything overlapping a rock', worst > -1, worst.toFixed(2));
+  const e = { x: -110, y: 0, vx: 300, vy: 50 };
+  const hit = pushOut(e, 20, rocks);
+  check('swimming into a rock stops you going in, but you slide along it', hit && e.vx <= 0.001 && e.vy === 50 && e.x <= -120 + 1e-9, JSON.stringify(e));
+  const far = { x: 400, y: 400, vx: 1, vy: 1 };
+  check('away from rocks nothing changes', !pushOut(far, 20, rocks) && far.x === 400 && far.vx === 1);
+  check('obstacles leave room where you start', OBSTACLES.clear >= 1000 && OBSTACLES.count >= 10);
+}
+
+// ---------- Oysters, pearls and power-ups ----------
+{
+  const [OYSTER, PICKUPS, PEARLS_PER_POINT, oysterPhase, pearlPoints, pearlCount, rollPickup, mulberry32] = ['OYSTER', 'PICKUPS', 'PEARLS_PER_POINT', 'oysterPhase', 'pearlPoints', 'pearlCount', 'rollPickup', 'mulberry32'].map(n => vm.runInThisContext(n));
+  const o = OYSTER, open0 = o.closed, tell0 = o.closed + o.open, snap0 = tell0 + o.tell, cycle = snap0 + o.snap;
+  check('an oyster starts closed, opens, shivers, then snaps', oysterPhase(0) === 'closed' && oysterPhase(open0 - 0.01) === 'closed' && oysterPhase(open0 + 0.01) === 'open'
+    && oysterPhase(tell0 - 0.01) === 'open' && oysterPhase(tell0 + 0.01) === 'tell' && oysterPhase(snap0 + 0.01) === 'snap' && oysterPhase(cycle + 0.01) === 'closed');
+  check('the shiver gives you a fair warning before the snap', o.tell >= 0.5);
+  check('Pearl Diver keeps oysters open longer', oysterPhase(tell0 + 0.5, 1.5) === 'open' && oysterPhase(tell0 + 0.5) === 'tell');
+  check('a black pearl is worth more than a white one, and counts more', pearlPoints(true, 2) > pearlPoints(false, 2) && pearlPoints(false, 3) === o.white * 3 && pearlCount(true) > pearlCount(false));
+  check('pearls add up to bonus skill points', PEARLS_PER_POINT >= 3 && PEARLS_PER_POINT <= 8);
+  const roll = seed => { const r = mulberry32(seed); return Array.from({ length: 400 }, () => rollPickup(r)); };
+  const p1 = roll(7), kinds = new Set(p1);
+  check('power-ups are the same for the same seed, and every kind comes up', p1.join() === roll(7).join() && p1.join() !== roll(8).join() && kinds.size === Object.keys(PICKUPS.kinds).length, [...kinds].join());
 }
 
 // ---------- Skill tree ----------

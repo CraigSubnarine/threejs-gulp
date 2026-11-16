@@ -164,6 +164,178 @@ async function run(browser, name, options) {
   }
   await page.evaluate(() => __step(60));
 
+  // ---------- The wide sea, rocks, and the surface ----------
+  const edges = await page.evaluate(() => {
+    input.mouse = null; // clicking the boost button left the mouse over it, and the fish would follow it
+    const P = __P(), out = {};
+    for (const [key, side] of [['arrowright', 'right'], ['arrowleft', 'left']]) {
+      Object.assign(P, { x: 0, y: 1000, vx: 0, vy: 0 }); // up in open water, above the rocks
+      input.keys.add(key);
+      for (let i = 0; i < 60 * 25; i++) game.update(1 / 60);
+      input.keys.delete(key);
+      out[side] = Math.round(P.x);
+    }
+    return out;
+  });
+  check(`${name}: the sea is wide: you can swim to x ≈ ±6500`, edges.right > 6400 && edges.left < -6400, JSON.stringify(edges));
+  // A rock with open water to its left, at its own height: something swimming right runs into it.
+  const findRock = () => page.evaluate(() => {
+    const cs = game.G.circles, free = (x, y, r) => cs.every(c => Math.hypot(x - c.x, y - c.y) > c.r + r);
+    const c = cs.find(c => c.x > 1000 && c.r > 90 && free(c.x - c.r - 70, c.y, 40) && free(c.x - c.r - 300, c.y, 60));
+    return c && { x: c.x, y: c.y, r: c.r };
+  });
+  const rock = await findRock();
+  check(`${name}: the level has rocks on the play plane`, !!rock && (await page.evaluate(() => game.G.circles.length)) >= 20, JSON.stringify(rock));
+  if (rock) {
+    const block = await page.evaluate(c => {
+      const P = __P(), pr = P.len * SHAPE_R[game.G.cls.spec.shape];
+      __clear();
+      Object.assign(P, { x: c.x - c.r - pr - 120, y: c.y, vx: 0, vy: 0 });
+      input.keys.add('arrowright');
+      let closest = Infinity;
+      for (let i = 0; i < 90; i++) { game.update(1 / 60); closest = Math.min(closest, Math.hypot(P.x - c.x, P.y - c.y) - c.r - pr); }
+      input.keys.delete('arrowright');
+      return { closest: +closest.toFixed(1), left: P.x < c.x };
+    }, rock);
+    check(`${name}: you can't swim through a rock`, block.closest > -1 && block.left, JSON.stringify(block));
+    const trap = await page.evaluate(c => {
+      const P = __P();
+      __clear();
+      Object.assign(P, { x: c.x - c.r - 260, y: c.y, vx: 0, vy: 0 });
+      const f = __put('goby', 170, 0, 1); // a skittish fish between you and the rock: it flees straight into it
+      for (let i = 0; i < 60; i++) game.update(1 / 60);
+      const pinned = { gap: +(Math.hypot(f.x - c.x, f.y - c.y) - c.r).toFixed(0), left: f.x < c.x, speed: Math.round(Math.hypot(f.vx, f.vy)) };
+      input.keys.add('arrowright');
+      for (let i = 0; i < 60 && game.G.fish.includes(f); i++) game.update(1 / 60);
+      input.keys.delete('arrowright');
+      return { ...pinned, eaten: !game.G.fish.includes(f) };
+    }, rock);
+    check(`${name}: a fleeing fish gets cornered against a rock, and you catch it there`, trap.left && trap.gap < 60 && trap.eaten, JSON.stringify(trap));
+    await page.evaluate(c => { const P = __P(); Object.assign(P, { x: c.x - c.r - 500, y: c.y + 200 }); __put('goby', 200, 40, 1); __put('parrot', -250, -120, 1); __step(120); }, rock);
+    await shot('02b-rocks');
+  }
+  await page.evaluate(() => { const P = __P(); __clear(); Object.assign(P, { x: 300, y: WORLD.y - 60, vx: 0, vy: 0 }); __step(150); });
+  const surface = await page.evaluate(() => { const v = game.camera.position; return { camY: Math.round(v.y) }; });
+  await shot('02c-surface');
+  check(`${name}: the camera stops with the surface at the top of the screen`, true, JSON.stringify(surface));
+  await page.evaluate(() => { const P = __P(); Object.assign(P, { x: 0, y: 0, vx: 0, vy: 0 }); __clear(); __step(90); });
+
+  // ---------- Oysters and pearls ----------
+  const oy = await page.evaluate(() => {
+    const g = game.G, P = __P(), o = g.oysters[0], size = OYSTER.size;
+    __clear();
+    const n = g.oysters.length, onFloor = g.oysters.every(o => o.y < -WORLD.y + 50);
+    Object.assign(o, { t: OYSTER.closed + 0.2, has: true, black: false, mode: 'open' }); // just opened
+    Object.assign(P, { x: o.x, y: o.y + size * 0.25, vx: 0, vy: 0 });
+    const s0 = g.score, p0 = g.pearls, pts0 = g.points;
+    g.pearls = PEARLS_PER_POINT - 1; // one more makes a skill point
+    game.update(1 / 60);
+    const took = { pearls: g.pearls, score: g.score - s0, points: g.points - pts0, has: o.has };
+    g.pearls = p0 + 1;
+    g.points = pts0;
+    return { n, onFloor, ...took, want: OYSTER.white * g.level };
+  });
+  check(`${name}: oysters sit on the sea floor`, oy.n === 2 && oy.onFloor, JSON.stringify(oy));
+  check(`${name}: grabbing a pearl from an open oyster scores, and every 5 pearls give a skill point`, oy.score === oy.want && oy.points === 1 && !oy.has, JSON.stringify(oy));
+  const snap = await page.evaluate(() => {
+    const g = game.G, P = __P(), o = g.oysters[1], size = OYSTER.size, snap0 = OYSTER.closed + OYSTER.open + OYSTER.tell;
+    __clear();
+    const caught = () => { Object.assign(o, { t: snap0 - 0.01, mode: 'tell' }); Object.assign(P, { x: o.x, y: o.y + size * 0.2, vx: 0, vy: 0, safe: 0 }); game.update(1 / 60); game.update(1 / 60); };
+    P.shields = 1;
+    caught(); // small: it would eat you, but a shield spits you out
+    const small = { alive: P.alive, shields: P.shields };
+    P.safe = 0; P.tier = 3;
+    caught(); // big: just a pinch
+    const big = { alive: P.alive, stun: P.stun > 0 };
+    Object.assign(P, { tier: 1, safe: 1e6, stun: 0, shields: 0 });
+    return { small, big };
+  });
+  check(`${name}: an oyster's snap catches a small fish (a shield saves it)`, snap.small.alive && snap.small.shields === 0, JSON.stringify(snap));
+  check(`${name}: a bigger fish just gets pinched`, snap.big.alive && snap.big.stun, JSON.stringify(snap));
+  await page.evaluate(() => {
+    const g = game.G, P = __P(), o = g.oysters[0];
+    __clear();
+    Object.assign(o, { t: OYSTER.closed + 1, has: true, black: true, mode: 'open' });
+    o.obj.setBlack(true);
+    Object.assign(P, { x: o.x - 330, y: o.y + 260, vx: 0, vy: 0 });
+    __step(120); // the camera catches up
+    game.spawnPickup('shock', o.x + 180, o.y + 480);
+    __step(30);
+  });
+  await shot('02d-oyster');
+
+  // ---------- Power-ups ----------
+  const take = kind => page.evaluate(k => { const P = __P(); game.spawnPickup(k, P.x + 10, P.y); game.update(1 / 60); return { gone: !game.G.pickup, power: P.power?.kind ?? null }; }, kind);
+  await page.evaluate(() => { const P = __P(); Object.assign(P, { x: 0, y: 0, vx: 0, vy: 0, safe: 1e6 }); __step(90); __clear(); }); // let the camera catch up, or new fish count as off screen
+  const shock = await page.evaluate(async () => {
+    const P = __P(), f = __put('grouper', 320, 0);
+    P.safe = 0;
+    __step(10);
+    const chasing = f.chase > 0;
+    return { chasing, f: true };
+  });
+  const shockTake = await take('shock');
+  const shockAfter = await page.evaluate(() => { const f = game.G.fish.find(f => f.s.key === 'grouper'); __step(30); const r = { stun: f.stun > 0, chase: f.chase, alive: __P().alive }; __P().safe = 1e6; return r; });
+  check(`${name}: Shock makes a chasing hunter go limp`, shock.chasing && shockTake.gone && shockTake.power === 'shock' && shockAfter.stun && shockAfter.chase === 0 && shockAfter.alive, JSON.stringify({ shock, shockTake, shockAfter }));
+  const shrink = await page.evaluate(() => {
+    __clear();
+    const P = __P(), f = __put('parrot', 260, 0), before = canEat(P, f);
+    game.spawnPickup('shrink', P.x + 10, P.y);
+    game.update(1 / 60);
+    __step(2);
+    return { before, tier: f.tier, food: canEat(P, f), f: game.G.fish.includes(f) };
+  });
+  check(`${name}: Shrink turns a fish one size bigger into food`, !shrink.before && shrink.food && shrink.tier === 0, JSON.stringify(shrink));
+  const rush = await page.evaluate(() => {
+    __clear();
+    const P = __P();
+    game.spawnPickup('rush', P.x + 10, P.y);
+    game.update(1 / 60);
+    input.keys.add('arrowright');
+    let top = 0;
+    for (let i = 0; i < 60; i++) { game.update(1 / 60); top = Math.max(top, Math.hypot(P.vx, P.vy)); }
+    input.keys.delete('arrowright');
+    return { power: P.power?.kind, top: Math.round(top), base: Math.round(PLAYER.speed * game.G.stats.speed), hud: document.getElementById('perks').textContent };
+  });
+  check(`${name}: Rush makes you swim faster (and shows on the HUD)`, rush.power === 'rush' && rush.top > rush.base * 1.35 && rush.hud.includes('RUSH'), JSON.stringify(rush));
+  const shield = await page.evaluate(() => { const P = __P(); P.power = null; const s0 = P.shields; game.spawnPickup('shield', P.x + 10, P.y); game.update(1 / 60); const r = P.shields - s0; P.shields = 0; return r; });
+  check(`${name}: Bubble Shield gives you a save`, shield === 1, String(shield));
+  const drift = await page.evaluate(() => {
+    const g = game.G, P = __P(), out = {};
+    P.x = 0; P.y = 0;
+    g.pickT = 0.01;
+    game.update(1 / 60);
+    const p = g.pickup, y0 = p?.y;
+    for (let i = 0; i < 120; i++) game.update(1 / 60);
+    out.came = !!p; out.falls = p && g.pickup === p && p.y < y0 - 100;
+    for (let i = 0; i < 60 * PICKUPS.life; i++) game.update(1 / 60);
+    out.pops = g.pickup !== p;
+    return out;
+  });
+  check(`${name}: a power-up bubble drifts down now and then, and pops if you leave it`, drift.came && drift.falls && drift.pops, JSON.stringify(drift));
+  await page.evaluate(() => { const P = __P(); Object.assign(P, { x: 0, y: 0, vx: 0, vy: 0, power: null }); game.G.pickT = 999; __clear(); __step(30); });
+
+  // ---------- The wreck and its shard ----------
+  const wreck = await page.evaluate(() => {
+    const g = game.G, P = __P(), sh = g.shard;
+    if (!sh) return { shard: false };
+    const far = Math.abs(sh.x) > WORLD.x * 0.35;
+    Object.assign(P, { x: sh.x - 260, y: sh.y + 260, vx: 0, vy: 0 });
+    __step(120); // the camera catches up
+    const glint = sh.glint.visible || (__step(10), sh.glint.visible);
+    return { shard: true, far, glint, x: Math.round(sh.x) };
+  });
+  check(`${name}: each level hides a shard in a wreck far out in the sea`, wreck.shard && wreck.far, JSON.stringify(wreck));
+  await shot('02e-wreck');
+  const shard1 = await page.evaluate(() => {
+    const g = game.G, P = __P(), sh = g.shard;
+    Object.assign(P, { x: sh.x, y: sh.y, vx: 0, vy: 0 });
+    game.update(1 / 60);
+    return { shards: g.shards.size, gone: !g.shard, title: document.getElementById('bannerTitle').textContent, hud: document.getElementById('pearls').textContent };
+  });
+  check(`${name}: touching the shard takes it (1/5, on the HUD too)`, shard1.shards === 1 && shard1.gone && shard1.title === 'SHARD 1/5' && shard1.hud.includes('\u25C6\u25C7'), JSON.stringify(shard1));
+  await page.evaluate(() => { const P = __P(); Object.assign(P, { x: 0, y: 0, vx: 0, vy: 0 }); __step(120); __clear(); });
+
   // ---------- Eating, combos, growing ----------
   const eat1 = await page.evaluate(() => {
     const g = game.G;
@@ -329,7 +501,7 @@ async function run(browser, name, options) {
     return { phase: game.G.phase, bar: !document.getElementById('boss').hidden, name: document.getElementById('bossName').textContent, hp: A?.hp, title: document.getElementById('bannerTitle').textContent, taunt: document.getElementById('bannerSub').textContent };
   });
   check(`${name}: filling level 5's meter brings in the Barracuda with a taunt and a health bar`, arrive.phase === 'apex' && arrive.bar && arrive.name === 'The Barracuda' && arrive.hp === 6 && arrive.title === 'THE BARRACUDA' && arrive.taunt.length > 10, JSON.stringify(arrive));
-  await page.evaluate(() => __step(90));
+  await page.evaluate(() => { game.G.circles = []; __step(90); }); // the attack checks need open water (rocks stop a lunge)
   await shot('10-apex');
   // Let it fight for a while (you can't be eaten here): it circles, shakes with a "!", lunges fast, then slows down.
   const cycle = await page.evaluate(() => {
@@ -360,8 +532,10 @@ async function run(browser, name, options) {
   const bite1 = await page.evaluate(() => { const A = game.G.apex, P = __P(); P.x = -A.len / 2 - 10; P.y = 0; game.update(1 / 60); return A.hp; });
   check(`${name}: biting its tail takes off 1`, bite1 === 5, String(bite1));
   await hold();
-  const bite2 = await page.evaluate(() => { const A = game.G.apex, P = __P(); P.x = -A.len / 2 - 10; P.y = 0; P.boost = 0.3; game.update(1 / 60); return { hp: A.hp, phase: A.stage, taunt: !!document.querySelector('.pop.taunt') }; });
-  check(`${name}: a boosting bite takes off 2, and at half health it gets angry (phase 2, with a taunt)`, bite2.hp === 3 && bite2.phase === 1 && bite2.taunt, JSON.stringify(bite2));
+  await page.evaluate(() => { const A = game.G.apex, P = __P(); Object.assign(P, { x: -A.len / 2 - 10, y: 0, face: 1, charge: 1 }); });
+  await tap('#boostBtn'); // the real button: it used to do nothing during the apex fight
+  const bite2 = await page.evaluate(() => { const A = game.G.apex, boosting = __P().boost > 0; game.update(1 / 60); return { boosting, hp: A.hp, phase: A.stage, taunt: !!document.querySelector('.pop.taunt') }; });
+  check(`${name}: the boost button works in the fight: a boosting bite takes off 2, and at half health it gets angry (phase 2, with a taunt)`, bite2.boosting && bite2.hp === 3 && bite2.phase === 1 && bite2.taunt, JSON.stringify(bite2));
   await hold();
   const jaws = await page.evaluate(() => { const A = game.G.apex, P = __P(); Object.assign(P, { x: A.len / 2 - 30, y: 0, safe: 0, shields: 1 }); game.update(1 / 60); const r = { alive: P.alive, shields: P.shields, hp: A.hp }; P.safe = 1e6; return r; });
   check(`${name}: its jaws would eat you (Spines spits you out)`, jaws.alive && jaws.shields === 0 && jaws.hp === 3, JSON.stringify(jaws));
@@ -383,6 +557,7 @@ async function run(browser, name, options) {
   await tap('#treeNext');
   const loop = await page.evaluate(() => { for (let i = 0; i < 60 && game.G.phase !== 'fadein'; i++) __step(1); return { level: game.G.level, index: game.G.index, spot: game.G.spot.name, faster: speedAt(game.G.level) > speedAt(1), apex: !!game.G.apex }; });
   check(`${name}: after the Barracuda the reef starts over, deeper and faster`, loop.level === 6 && loop.index === 0 && loop.faster && !loop.apex, JSON.stringify(loop));
+  check(`${name}: without all 5 shards the portal stays dark: same world, and the shards you found are kept`, await page.evaluate(() => game.G.world === 0 && !game.G.portal && document.getElementById('bannerSub').textContent !== ''));
 
   // ---------- Skills at work: Spines spits out a bite ----------
   const spines = await page.evaluate(() => {
@@ -404,6 +579,56 @@ async function run(browser, name, options) {
     return { shields, alive: P.alive, left: P.shields, perks: document.getElementById('perks').textContent };
   });
   check(`${name}: Spines spits out a bite once per level`, spines.owned === 3 && spit.shields === 1 && spit.alive && spit.left === 0, JSON.stringify({ ...spines, ...spit }));
+
+  // ---------- All five shards: the orb, the portal, and the next world ----------
+  await page.evaluate(() => { game.G.shards = new Set([0, 1, 2, 3, 4]); game.G.worldPearls = 10; });
+  for (let i = 0; i < 6 && (await page.evaluate(() => game.G.index)) < 4; i++) {
+    const st = await page.evaluate(() => __clearLevel());
+    if (st !== 'tree') { check(`${name}: clearing to the apex`, false, st); break; }
+    await tap('#treeNext');
+    await page.evaluate(() => { for (let i = 0; i < 60 && game.G.phase !== 'fadein'; i++) __step(1); __step(40); });
+  }
+  const portal = await page.evaluate(() => {
+    for (let i = 0; i < 120 && game.G.phase !== 'swim'; i++) game.update(1 / 60);
+    const P = __P();
+    P.safe = 1e6;
+    game.G.meter = METER_NEED - 0.2;
+    __put(__food(), 5, 0);
+    __step(1);
+    const A = game.G.apex;
+    if (!A) return { apex: false, index: game.G.index };
+    Object.assign(A, { mode: 'recover', t: 9, x: P.x + 400, y: P.y, vx: 0, vy: 0, face: 1, inv: 0, hp: 1 });
+    Object.assign(P, { x: A.x - A.len / 2 - 10, y: A.y, vx: 0, vy: 0 });
+    game.update(1 / 60);
+    for (let i = 0; i < 200 && game.G.phase !== 'portal'; i++) game.update(1 / 60);
+    __step(60);
+    const pt = game.G.portal;
+    return { apex: true, phase: game.G.phase, portal: !!pt, title: document.getElementById('bannerTitle').textContent };
+  });
+  check(`${name}: with all 5 shards, beating the apex opens a portal`, portal.phase === 'portal' && portal.portal && portal.title === 'THE ORB IS WHOLE!', JSON.stringify(portal));
+  await shot('12-portal');
+  const keep = await page.evaluate(() => {
+    const pt = game.G.portal, P = __P();
+    if (!pt) return {};
+    Object.assign(P, { x: pt.x, y: pt.y, vx: 0, vy: 0 });
+    game.update(1 / 60);
+    return { state: app.state, n: document.querySelectorAll('.keepSkill').length, info: document.getElementById('keepInfo').textContent };
+  });
+  check(`${name}: swimming into the portal asks which skills to keep (2 of your 4, for 10 pearls)`, keep.state === 'keep' && keep.n === 4 && keep.info.includes('Keep 2 skills'), JSON.stringify(keep));
+  await shot('13-keep');
+  await tap('[data-keep=scales3]');
+  await tap('[data-keep=scales1]');
+  await tap('[data-keep=scales2]'); // a third doesn't fit
+  await tap('#keep [data-action=dive]');
+  const world2 = await page.evaluate(() => {
+    for (let i = 0; i < 60 && game.G.phase !== 'fadein'; i++) __step(1);
+    const g = game.G, P = __P();
+    return { state: app.state, world: g.world, owned: g.owned, shards: g.shards.size, tier: P.tier, len: Math.round(P.len), want: Math.round(fishLen(1)), title: document.getElementById('bannerTitle').textContent, where: document.getElementById('whereName').textContent };
+  });
+  check(`${name}: the next world starts you small, with only the skills you kept and no shards`, world2.state === 'playing' && world2.world === 1 && world2.owned.join() === 'scales3,scales1' && world2.shards === 0 && world2.tier === 1 && world2.len === world2.want && world2.title === 'WORLD 2', JSON.stringify(world2));
+  await page.evaluate(() => __step(90));
+  await shot('14-world2');
+  check(`${name}: opening a portal is remembered (it unlocks things)`, await page.evaluate(() => progress.portals >= 1 && progress.apexBeaten));
 
   // ---------- Classes ----------
   await tap('#pauseBtn');
@@ -431,6 +656,30 @@ async function run(browser, name, options) {
   await ctx.close();
 }
 
+// A phone held sideways: the sea fills the screen, and the HUD leaves room to play.
+async function landscape(browser) {
+  const ctx = await browser.newContext({ viewport: { width: 812, height: 375 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+  const page = await ctx.newPage(), errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.goto(url);
+  await page.waitForFunction(() => !!window.game, null, { timeout: 20000 });
+  await page.evaluate(installHarness);
+  await page.evaluate(() => __step(60));
+  const menuFits = await page.evaluate(() => { const r = document.getElementById('main').getBoundingClientRect(); return r.height <= innerHeight; });
+  check('landscape: the main menu fits (it scrolls if it has to)', menuFits);
+  await page.tap('#main [data-action=play]');
+  await page.evaluate(() => __step(150));
+  const lay = await page.evaluate(() => {
+    const c = document.getElementById('view').getBoundingClientRect(), hud = document.getElementById('meterRow').getBoundingClientRect(), b = document.getElementById('boostBtn').getBoundingClientRect();
+    return { canvas: Math.round(c.width), width: innerWidth, hudBottom: Math.round(hud.bottom), height: innerHeight, boost: b.right <= innerWidth && b.bottom <= innerHeight };
+  });
+  check('landscape: the sea fills the whole screen', lay.canvas === lay.width, JSON.stringify(lay));
+  check('landscape: the HUD takes less than a third of the height, and BOOST is on screen', lay.hudBottom < lay.height / 3 && lay.boost, JSON.stringify(lay));
+  await page.screenshot({ path: path.join(out, 'landscape-01-play.png'), timeout: 45000 }).catch(() => {});
+  check('landscape: no page errors', !errors.length, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 (async () => {
   const server = await serve(path.resolve(__dirname, '..'));
   url = `${server.url}/index.html`;
@@ -439,6 +688,7 @@ async function run(browser, name, options) {
   try {
     await run(browser, 'phone', { viewport: { width: 375, height: 812 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
     await run(browser, 'desktop', { viewport: { width: 1280, height: 800 } });
+    await landscape(browser);
   } finally {
     await browser.close();
     server.close();
