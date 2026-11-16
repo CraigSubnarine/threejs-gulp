@@ -109,7 +109,7 @@
     box-shadow: 0 0 18px color-mix(in srgb, var(--c) 60%, transparent), inset 0 0 10px color-mix(in srgb, var(--c) 40%, transparent); }
   .emblem svg { width: 30px; height: 30px; }
   .web { position: relative; }
-  .web svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  .web > svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; } /* the lines only, not the icons in the hexagons */
   .web path { fill: none; stroke: var(--c); stroke-width: 2.5; opacity: .25; vector-effect: non-scaling-stroke; }
   .web path.lit { opacity: .95; }
   .hex { position: absolute; width: 54px; height: 60px; min-height: 0; margin: -30px 0 0 -27px; padding: 0; border-radius: 0; background: var(--c);
@@ -123,8 +123,22 @@
   .hex.sel { transform: scale(1.15); }
   .hex:focus-visible { outline: none; transform: scale(1.15); }
   @keyframes hexglow { 50% { filter: brightness(1.45); } }
-  #treeDetail { min-height: 2.6em; }
+  #treeDetail { min-height: 2.6em; margin: 0; }
+  .treeBtns { display: flex; gap: 8px; }
+  .treeBtns button { flex: 1; }
+  #treeCombosBox { text-align: left; color: #8aa0aa; font-size: .85rem; }
+  #treeCombosBox summary { cursor: pointer; font-weight: 800; padding: 4px 0; }
+  /* A phone held upright: one branch at a time, smaller hexagons, no repeated header, so the whole tree and a
+     tapped skill's description fit on screen together. */
   @media (max-width: 640px) {
+    #tree.screen { padding: 12px; gap: 8px; }
+    #tree h2 { font-size: 1.6rem; margin: 0; }
+    #tree .big { font-size: 1.1rem; }
+    .panel .emblem, .panel h3 { display: none; }
+    .panel.on { padding: 6px 4px 8px; }
+    .hex { width: 46px; height: 52px; margin: -26px 0 0 -23px; }
+    .hex svg { width: 22px; height: 22px; }
+    #treeDetail { font-size: .9rem; }
     #treeTabs { display: flex; }
     #treeGrid { grid-template-columns: 1fr; }
     .panel { display: none; }
@@ -212,7 +226,7 @@
     <label class="row">Vibration <input type="checkbox" id="vibrate"></label>
     <p class="hint"><b>Phone:</b> touch anywhere and drag, like a joystick. The further you drag, the faster you swim. Tap <b>BOOST</b> (bottom right) for a burst of speed; it takes a few seconds to recharge. <b>Computer:</b> your fish follows the mouse, or use the arrow keys or WASD. Click or press Space to boost.</p>
     <p class="hint">The bar at the top shows what you can eat (green) and what can eat you (red). Eat to fill your meter: you grow at each mark, and a full meter clears the level. One bite from a bigger fish and the run is over.</p>
-    <p class="hint"><b>Oysters</b> on the sea floor open to show a pearl: grab it before the shell snaps shut (while you're small, the snap eats you). Every 5 pearls give a bonus skill point. <b>Bubbles</b> drifting down hold power-ups: Shock, Shrink, Rush and Bubble Shield.</p>
+    <p class="hint"><b>Oysters</b> on the sea floor open to show a pearl: grab it before the shell snaps shut (while you're small, the snap eats you). Every 5 pearls give a bonus skill point. <b>Cracked</b> (sandy) rock pillars smash if you boost into them. <b>Bubbles</b> drifting down hold power-ups: Shock, Shrink, Rush and Bubble Shield.</p>
     <p class="hint">In the <b>Kelp Forest</b> (behind the reef's portal), <b>jellyfish</b> drift about: you can never eat them, and touching one stings (you're stunned for a moment). They're on the pink chip at the end of the food chain bar.</p>
     <p class="hint">Each level hides a <b>shard</b> in a wreck out in the wide sea. Find all five before the apex and they make an orb that opens a <b>portal</b> to another world's ocean: you start small again but keep some skills. Miss one and the world starts over, faster.</p>
     <p class="hint">At the end of a zone its <b>apex predator</b> shows up. Bite its <b>tail</b> (boost into it for a double bite) and stay away from its <b>jaws</b>. When it shakes and a red "!" appears, it's about to lunge; right after a lunge it slows down, so that's your chance.</p>
@@ -233,9 +247,11 @@
     <div id="treeTabs"></div>
     <div id="treeGrid"></div>
     <p class="hint" id="treeDetail"></p>
-    <button class="primary" data-action="learn" id="learnBtn" hidden>Learn</button>
-    <button data-action="next" id="treeNext">Next level</button>
-    <div id="treeCombos"></div>
+    <div class="treeBtns">
+      <button class="primary" data-action="learn" id="learnBtn" hidden>Learn</button>
+      <button data-action="next" id="treeNext">Next level</button>
+    </div>
+    <details id="treeCombosBox"><summary>Combos</summary><div id="treeCombos"></div></details>
   </section>
 
   <section class="screen" id="keep" hidden>

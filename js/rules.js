@@ -42,9 +42,9 @@ const atLevel = (f, index) => ({ ...f, tier: f.rank - RANKS_PER_LEVEL * index, p
 
 // Obstacles are circles on the play plane. pushOut moves something round (e: x, y, vx, vy; radius r) out of any
 // circle it overlaps and takes away the part of its velocity heading into it, so it slides along the rock instead.
-// Returns true if it touched one.
+// Returns the last circle it touched (or null).
 function pushOut(e, r, circles) {
-  let hit = false;
+  let hit = null;
   for (let pass = 0, moved = true; moved && pass < 12; pass++) { // a few passes: in the notch between two rocks, leaving one can push you into the other
     moved = false;
     for (const c of circles) {
@@ -57,7 +57,8 @@ function pushOut(e, r, circles) {
       e.y = c.y + ny * min;
       const into = e.vx * nx + e.vy * ny;
       if (into < 0) { e.vx -= into * nx; e.vy -= into * ny; }
-      hit = moved = true;
+      hit = c;
+      moved = true;
     }
   }
   return hit;

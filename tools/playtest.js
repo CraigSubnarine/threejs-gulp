@@ -40,7 +40,8 @@ function installHarness() {
   });
   // A bot that can't be eaten and always swims for the nearest fish it can eat.
   window.__bot = (expr, maxSeconds) => {
-    const until = new Function(`return ${expr}`);
+    const until = new Function(`return ${expr}`), skip = new Map(); // fish it gave up on (blocked by a rock) -> until when
+    let last = null, stuckT = 0;
     for (let f = 0; f < maxSeconds * 60 && !until(); f++) {
       if (app.state !== 'playing') break;
       const P = __P();
@@ -48,8 +49,10 @@ function installHarness() {
       let best = null, bd = Infinity;
       for (const fish of game.G.fish) {
         const d = Math.hypot(fish.x - P.x, fish.y - P.y);
-        if (fish.tier < P.tier && fish.s.behavior !== 'jelly' && d < bd) { bd = d; best = fish; }
+        if (fish.tier < P.tier && fish.s.behavior !== 'jelly' && !(skip.get(fish) > f) && d < bd) { bd = d; best = fish; }
       }
+      if (last && Math.hypot(P.x - last.x, P.y - last.y) < 2) { if (++stuckT > 45 && best) { skip.set(best, f + 240); stuckT = 0; } } else stuckT = 0; // not getting anywhere: try another fish
+      last = { x: P.x, y: P.y };
       input.stick = best ? { x: (best.x - P.x) / bd, y: (best.y - P.y) / bd } : { x: 0, y: 0 };
       game.update(1 / 60);
     }
@@ -150,11 +153,12 @@ async function run(browser, name, options) {
   const b0 = await boostState();
   check(`${name}: the boost button shows, ready`, b0.shown && b0.ready, JSON.stringify(b0));
   await tap('#boostBtn');
-  await page.evaluate(() => __step(6));
+  await page.evaluate(() => { input.mouse = null; __step(6); }); // a desktop click leaves the mouse on the button, and the fish would follow it
   const b1 = await boostState();
   check(`${name}: tapping boost gives a burst of speed and starts the recharge`, b1.boost && b1.fast && !b1.ready && b1.charge === 0, JSON.stringify(b1));
   await page.evaluate(() => __step(40));
   await tap('#boostBtn');
+  await page.evaluate(() => { input.mouse = null; });
   const b2 = await boostState();
   check(`${name}: no boost while it's recharging`, !b2.boost && !b2.ready, JSON.stringify(b2));
   await page.evaluate(() => __step(Math.ceil(60 * BOOST.recharge)));
@@ -206,15 +210,53 @@ async function run(browser, name, options) {
       const f = __put('goby', 170, 0, 1); // a skittish fish between you and the rock: it flees straight into it
       for (let i = 0; i < 60; i++) game.update(1 / 60);
       const pinned = { gap: +(Math.hypot(f.x - c.x, f.y - c.y) - c.r).toFixed(0), left: f.x < c.x, speed: Math.round(Math.hypot(f.vx, f.vy)) };
-      input.keys.add('arrowright');
-      for (let i = 0; i < 60 && game.G.fish.includes(f); i++) game.update(1 / 60);
-      input.keys.delete('arrowright');
+      for (let i = 0; i < 90 && game.G.fish.includes(f); i++) { // swim at it, like a player would
+        const dx = f.x - P.x, dy = f.y - P.y, m = Math.hypot(dx, dy) || 1;
+        input.stick = { x: dx / m, y: dy / m };
+        game.update(1 / 60);
+      }
+      input.stick = null;
       return { ...pinned, eaten: !game.G.fish.includes(f) };
     }, rock);
     check(`${name}: a fleeing fish gets cornered against a rock, and you catch it there`, trap.left && trap.gap < 60 && trap.eaten, JSON.stringify(trap));
     await page.evaluate(c => { const P = __P(); Object.assign(P, { x: c.x - c.r - 500, y: c.y + 200 }); __put('goby', 200, 40, 1); __put('parrot', -250, -120, 1); __step(120); }, rock);
     await shot('02b-rocks');
+    const unstick = await page.evaluate(c => {
+      const P = __P();
+      __clear();
+      Object.assign(P, { x: c.x - 1500, y: c.y + 900, vx: 0, vy: 0 });
+      for (let i = 0; i < 90; i++) game.update(1 / 60);
+      const f = __put('snapper', 1500 - c.r - 90, -900, 1); // a calm fish swimming straight at the rock
+      let touching = 0, worst = 0;
+      for (let i = 0; i < 180; i++) {
+        game.update(1 / 60);
+        touching = Math.hypot(f.x - c.x, f.y - c.y) < c.r + f.len * 0.4 ? touching + 1 : 0;
+        worst = Math.max(worst, touching);
+      }
+      return { worst, gone: !game.G.fish.includes(f), away: Math.round(Math.hypot(f.x - c.x, f.y - c.y) - c.r - f.len * 0.4) };
+    }, rock);
+    check(`${name}: a calm fish that hits a rock goes round or turns back, instead of grinding on it`, unstick.worst < 90 && (unstick.gone || unstick.away > 0), JSON.stringify(unstick));
   }
+  const smash = await page.evaluate(() => {
+    const g = game.G, P = __P(), c = g.circles.find(k => k.crack !== undefined), s = Math.sign(c?.x) || 1; // come at it from the start's side
+    if (!c) return { none: true, circles: g.circles.length, smashed: g.scenery.group.children.filter(m => m.isMesh && !m.visible).length, seed: g.seed, wreck: Math.round(g.wreck.x) };
+    const id = c.crack, n0 = g.circles.filter(k => k.crack === id).length;
+    Object.assign(P, { x: c.x - s * 700, y: c.y, vx: 0, vy: 0 });
+    for (let i = 0; i < 90; i++) game.update(1 / 60);
+    __clear();
+    const key = s > 0 ? 'arrowright' : 'arrowleft';
+    Object.assign(P, { x: c.x - s * (c.r + 150), y: c.y, vx: 0, vy: 0, charge: 1, face: s });
+    input.keys.add(key);
+    game.boost();
+    const why = { boost: +P.boost.toFixed(2), stun: +P.stun.toFixed(2), phase: g.phase, x0: Math.round((P.x - c.x) * s) };
+    for (let i = 0; i < 40; i++) game.update(1 / 60);
+    input.keys.delete(key);
+    why.x1 = Math.round((P.x - c.x) * s);
+    game.render();
+    return { n0, left: g.circles.filter(k => k.crack === id).length, hidden: !c.mesh.visible, past: (P.x - (c.x - s * c.r)) * s > 0, why };
+  });
+  check(`${name}: boosting into a cracked pillar smashes it, and you go straight through`, smash.n0 > 0 && smash.left === 0 && smash.hidden && smash.past, JSON.stringify(smash));
+  await shot('02f-smash');
   await page.evaluate(() => { const P = __P(); __clear(); Object.assign(P, { x: 300, y: WORLD.y - 60, vx: 0, vy: 0 }); __step(150); });
   const surface = await page.evaluate(() => { const v = game.camera.position; return { camY: Math.round(v.y) }; });
   await shot('02c-surface');
@@ -430,7 +472,7 @@ async function run(browser, name, options) {
 
   // ---------- Getting eaten ----------
   const dead = await page.evaluate(() => {
-    __P().safe = 0;
+    Object.assign(__P(), { safe: 0, shields: 0, power: null }); // a drifting Bubble Shield may have been picked up earlier
     __put('grouper', 15, 0);
     __step(1);
     const dying = !__P().alive;
@@ -446,6 +488,7 @@ async function run(browser, name, options) {
   await tap('#over [data-action=play]');
   const again = await page.evaluate(() => ({ state: app.state, score: game.G.score, level: game.G.level, alive: __P().alive, tier: __P().tier, owned: game.G.owned.length }));
   check(`${name}: Play again starts fresh`, again.state === 'playing' && again.score === 0 && again.level === 1 && again.alive && again.tier === 1 && again.owned === 0, JSON.stringify(again));
+  await page.evaluate(() => game.G.oysters.forEach(o => { o.has = false; o.regrow = 1e9; })); // no pearls: they'd add bonus skill points to the tree checks
   const t0 = await page.evaluate(() => game.G.t);
   const cleared = await page.evaluate(() => __bot(`game.G.phase === 'cleared'`, 300));
   check(`${name}: a bot that eats everything it can clears level 1`, cleared, `${Math.round((await page.evaluate(() => game.G.t)) - t0)} s of game time`);
@@ -461,6 +504,14 @@ async function run(browser, name, options) {
   check(`${name}: the tree offers the top node of each branch for 1 point`, tree.points === 1 && tree.open === 3 && tree.owned === 0 && tree.text.startsWith('1 skill point'), JSON.stringify(tree));
   await tap('[data-node=quickCharge]');
   check(`${name}: a later node says what it needs first`, await page.evaluate(() => document.getElementById('treeDetail').textContent.includes('Learn Fast Fins first') && document.getElementById('learnBtn').disabled));
+  const fit = await page.evaluate(() => {
+    const hexes = [...document.querySelectorAll('#treeGrid .hex')].filter(h => h.getClientRects().length);
+    const mid = r => [(r.left + r.right) / 2, (r.top + r.bottom) / 2];
+    const centred = hexes.length > 0 && hexes.every(h => { const [ax, ay] = mid(h.getBoundingClientRect()), [bx, by] = mid(h.querySelector('svg').getBoundingClientRect()); return Math.abs(ax - bx) < 2 && Math.abs(ay - by) < 2; });
+    return { centred, height: document.getElementById('tree').scrollHeight };
+  });
+  check(`${name}: skill icons sit in the middle of their hexagons`, fit.centred, JSON.stringify(fit));
+  if (options.hasTouch) check(`${name}: on a phone the whole tree and a tapped skill's description fit without scrolling`, fit.height <= 760, JSON.stringify(fit));
   await tap('[data-node=fastFins]');
   await tap('#learnBtn');
   const learned = await page.evaluate(() => ({ owned: game.G.owned, points: game.G.points, speed: game.G.stats.speed, cls: document.querySelector('[data-node=fastFins]').className }));
@@ -474,7 +525,7 @@ async function run(browser, name, options) {
   check(`${name}: on screen you're the same size across the cut`, Math.abs(after.screen / widened.screen - 1) < 0.08, `${widened.screen.toFixed(4)} -> ${after.screen.toFixed(4)}`);
   check(`${name}: level 2 is a different spot (Sandy Shallows, its own landmark)`, after.spot === 'Sandy Shallows' && after.landmark === 'grass' && after.sub.includes('2/5'), JSON.stringify(after));
   await page.evaluate(() => __step(90));
-  check(`${name}: and the new level's fish are bigger than you`, await page.evaluate(() => __chipsOk() && __P().tier === 1 && game.G.fish.some(f => f.tier > 1)));
+  check(`${name}: and the new level's fish are bigger than you`, await page.evaluate(() => __chipsOk() && __P().tier === 1 && game.G.levelFish.filter(f => f.tier > 1).length >= 4));
   const ladder = await page.evaluate(() => {
     const on = key => game.G.levelFish.find(f => f.key === key);
     const P = __P(), parrot = on('parrot'), trigger = on('trigger'), angel = on('angel');
@@ -505,14 +556,16 @@ async function run(browser, name, options) {
     const A = game.G.apex;
     return { phase: game.G.phase, mode: A?.mode, bar: !document.getElementById('boss').hidden, name: document.getElementById('bossName').textContent, hp: A?.hp, title: document.getElementById('bannerTitle').textContent, arrow: !document.getElementById('shardArrow').hidden };
   });
-  check(`${name}: filling level 5's meter wakes the Giant Moray in the wreck: a health bar, and an arrow to its lair`, arrive.phase === 'apex' && arrive.mode === 'lurk' && arrive.bar && arrive.name === 'The Giant Moray' && arrive.hp === 6 && arrive.title === 'THE GIANT MORAY' && arrive.arrow, JSON.stringify(arrive));
+  check(`${name}: filling level 5's meter wakes the Giant Moray in its rock: a health bar, and an arrow to its lair`, arrive.phase === 'apex' && arrive.mode === 'lurk' && arrive.bar && arrive.name === 'The Giant Moray' && arrive.hp === 6 && arrive.title === 'THE GIANT MORAY' && arrive.arrow, JSON.stringify(arrive));
   const lair = await page.evaluate(() => {
     const g = game.G, P = __P();
-    Object.assign(P, { x: g.wreck.x + 250, y: g.wreck.y + 650, vx: 0, vy: 0 });
+    Object.assign(P, { x: g.lair.x + 250, y: g.lair.y + 750, vx: 0, vy: 0 });
     __step(120);
-    return { mode: g.apex.mode, taunt: !!document.querySelector('.pop.taunt') };
+    return { mode: g.apex.mode, taunt: !!document.querySelector('.pop.taunt'), apart: Math.round(Math.abs(g.lair.x - g.wreck.x)), segs: g.apex.obj.segs?.length };
   });
-  check(`${name}: swimming to the wreck brings it out, with a taunt`, lair.mode !== 'lurk' && lair.taunt, JSON.stringify(lair));
+  check(`${name}: swimming to its rock brings it out, with a taunt`, lair.mode !== 'lurk' && lair.taunt, JSON.stringify(lair));
+  check(`${name}: the Moray lives in its own holed rock, far from the wreck (the shard stays easy to reach)`, lair.apart > 2500, JSON.stringify(lair));
+  check(`${name}: the Moray is a long serpent made of segments`, lair.segs >= 16, JSON.stringify(lair));
   await shot('10-apex');
   // Let it fight for a while (you can't be eaten here): a hole shakes with a "!", it strikes out, stays out, pulls back in.
   const cycle = await page.evaluate(() => {

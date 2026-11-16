@@ -171,8 +171,61 @@ function makeJelly(spec) {
   return { root, yaw, pitch, tail, spikes: null, mats: { body: j.bellMat, fin: j.tentMat } };
 }
 
+// A serpent at length 1 (the Giant Moray): a head with a jaw that opens, and a long chain of segments that taper to
+// the tail and ripple (segs; the game moves them), each with a scrap of fin on top. Facing +x like a fish.
+const serpentCache = new Map();
+function makeSerpent(spec) {
+  const N = 20, thick = spec.thick ?? 0.05;
+  if (!serpentCache.has(spec.key)) {
+    const std = o => caustics(new THREE.MeshStandardMaterial({ flatShading: true, roughness: 0.55, ...o }), 0.3);
+    serpentCache.set(spec.key, { body: std({ color: spec.body }), stripe: std({ color: spec.stripe ?? spec.body }), fin: std({ color: spec.fin, side: THREE.DoubleSide }),
+      ball: new THREE.SphereGeometry(1, 12, 9), fin1: flatFin([[0.5, 0], [-0.5, 0], [-0.2, 0.9], [0.3, 0.7]]), tooth: new THREE.ConeGeometry(0.004, 0.018, 4) });
+  }
+  const c = serpentCache.get(spec.key), root = new THREE.Group(), yaw = new THREE.Group(), pitch = new THREE.Group(), tail = new THREE.Group();
+  root.add(yaw);
+  yaw.add(pitch);
+  pitch.add(tail);
+  const segs = [];
+  for (let i = 0; i < N; i++) { // from just behind the head to the tip of the tail
+    const t = i / (N - 1), taper = 1 - t ** 1.6 * 0.82, step = 0.88 / (N - 1);
+    const seg = new THREE.Group();
+    seg.position.x = 0.36 - i * step;
+    const ball = new THREE.Mesh(c.ball, i % 4 === 1 ? c.stripe : c.body);
+    ball.scale.set(step * 0.85, thick * taper, thick * taper * 0.85);
+    const fin = new THREE.Mesh(c.fin1, c.fin);
+    fin.scale.set(step * 0.9, thick * taper * 0.9, 1);
+    fin.position.y = thick * taper * 0.8;
+    seg.add(ball, fin);
+    pitch.add(seg);
+    segs.push(seg);
+  }
+  const head = new THREE.Mesh(c.ball, c.body), jaw = new THREE.Group(), lower = new THREE.Mesh(c.ball, c.body);
+  head.scale.set(0.085, thick * 1.25, thick * 1.05);
+  head.position.x = 0.42;
+  jaw.position.set(0.36, -thick * 0.35, 0);
+  lower.scale.set(0.075, thick * 0.55, thick * 0.9);
+  lower.position.x = 0.06;
+  jaw.add(lower);
+  for (let k = 0; k < 6; k++) for (const side of [1, -1]) { // teeth along the jaw
+    const tooth = new THREE.Mesh(c.tooth, teethMat);
+    tooth.position.set(0.03 + k * 0.016, thick * 0.25, side * thick * 0.6);
+    jaw.add(tooth);
+  }
+  for (const side of [1, -1]) {
+    const e = new THREE.Mesh(c.ball, eyeMat), pu = new THREE.Mesh(c.ball, pupilMat);
+    e.scale.setScalar(thick * 0.32);
+    e.position.set(0.455, thick * 0.55, side * thick * 0.7);
+    pu.scale.setScalar(thick * 0.18);
+    pu.position.set(0.47, thick * 0.58, side * thick * 0.85);
+    pitch.add(e, pu);
+  }
+  pitch.add(head, jaw);
+  return { root, yaw, pitch, tail, spikes: null, mats: { body: c.body, stripe: c.stripe }, segs, jaw };
+}
+
 export function makeFish(spec, variant = null) {
   if (spec.shape === 'jelly') return makeJelly(spec);
+  if (spec.serpent) return makeSerpent(spec);
   const p = partsFor(spec), sh = p.sh, mats = matsFor(spec, variant);
   const root = new THREE.Group(), yaw = new THREE.Group(), pitch = new THREE.Group(), tail = new THREE.Group();
   root.add(yaw);
@@ -375,10 +428,27 @@ function landmark(kind, geos, R, base, rand, CORAL) {
   }
 }
 
+// Cracked rock: sandy, two-tone and blotchy, so it reads as "breakable". Each one is its own mesh (not merged), so
+// it can vanish when you smash it.
+const crackedMat = caustics(new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.95 }), 0.4);
+function crackedGeometry(rand) {
+  const g = new THREE.DodecahedronGeometry(1, 0).toNonIndexed(), n = g.attributes.position.count, col = new Float32Array(n * 3), c = new THREE.Color();
+  for (let t = 0; t < n; t += 3) { // one colour per triangle: sand, darker sand, or a dark crack
+    const r = rand();
+    c.set(r < 0.18 ? 0x4a3a2a : r < 0.55 ? 0x9a7c56 : 0xc4a77c);
+    for (let k = 0; k < 3; k++) c.toArray(col, (t + k) * 3);
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return g;
+}
+
 // Obstacles on the play plane (z = 0): rock pillars rising from the floor and arches you can swim under. Each rock
 // is also a collision circle (x, y, r) that you and the fish can't pass through. None near where you start.
-function obstacles(geos, R, rand, CORAL, clear = []) {
+// Some pillars are cracked (every OBSTACLES.crackedEvery-th): boost into one and the whole pillar crumbles. Their circles carry
+// crack (the pillar's id) and mesh.
+function obstacles(geos, R, rand, CORAL, clear = [], group) {
   const circles = [], floor = -WORLD.y - 50, half = WORLD.x - 300, n = OBSTACLES.count;
+  let pillars = 0;
   const rock = (x, y, r, k) => {
     geos.push(colored(new THREE.DodecahedronGeometry(1, 0), k % 2 ? 0x75899a : 0x667b8c, M(x, y, 0, R(0, 3), R(0, 3), R(0, 3), r, r * 0.92, r * 0.8)));
     circles.push({ x, y, r: r * 0.9 });
@@ -386,15 +456,23 @@ function obstacles(geos, R, rand, CORAL, clear = []) {
   const cap = (x, y, r) => geos.push(colored(new THREE.IcosahedronGeometry(1, 1), CORAL[Math.floor(rand() * CORAL.length)], M(x, y, 0, 0, R(0, 3), 0, r, r * 0.5, r * 0.7)));
   for (let i = 0; i < n; i++) {
     let x = -half + (i + 0.5) * 2 * half / n + R(-250, 250);
-    if (Math.abs(x) < OBSTACLES.clear) x = Math.sign(x || 1) * (OBSTACLES.clear + R(0, 300));
+    if (Math.abs(x) < OBSTACLES.clear) continue; // open water where you start (moving these aside piled them on top of each other)
     if (clear.some(c => Math.abs(x - c) < 1500)) continue; // room for the level's wreck
     if (rand() < 0.65) { // a pillar: a stack of rocks getting smaller towards the top
       let y = floor, r = R(150, 240);
+      const cracked = pillars++ % OBSTACLES.crackedEvery === 0; // every few pillars, so each level has some
       for (let k = 0, h = 3 + Math.floor(rand() * 6); k < h; k++, r *= R(0.8, 0.9)) { // 3-8 rocks: some reach mid-water
         y += k ? r * 1.5 : r * 0.6;
-        rock(x + R(-30, 30), y, r, k);
+        const rx = x + R(-30, 30);
+        if (!cracked) { rock(rx, y, r, k); continue; }
+        const mesh = new THREE.Mesh(crackedGeometry(rand), crackedMat);
+        mesh.position.set(rx, y, 0);
+        mesh.rotation.set(R(0, 3), R(0, 3), R(0, 3));
+        mesh.scale.set(r, r * 0.92, r * 0.8);
+        group.add(mesh);
+        circles.push({ x: rx, y, r: r * 0.9, crack: i, mesh });
       }
-      if (rand() < 0.6) cap(x, y + r * 0.8, r * 1.1);
+      if (!cracked && rand() < 0.6) cap(x, y + r * 0.8, r * 1.1);
     } else { // an arch: two legs and a curved top, with a gap underneath to swim through
       const w = R(380, 600), h = R(900, 1500), r = R(100, 140);
       for (const side of [-1, 1]) for (let y = floor + r * 0.5; y < floor + h - r; y += r * 1.4) rock(x + side * w, y, r, Math.round(y));
@@ -484,7 +562,7 @@ export function makeZone(zone, spot, scene, rand, clear = []) {
     if (rand() < 0.6) geos.push(colored(new THREE.IcosahedronGeometry(1, 1), CORAL[Math.floor(rand() * CORAL.length)], M(x, y + 10, z, 0, 0, 0, r * 0.9, r * 0.5, r * 0.9)));
   }
   landmark(spot.landmark, geos, R, base, rand, CORAL);
-  const circles = obstacles(geos, R, rand, CORAL, clear);
+  const circles = obstacles(geos, R, rand, CORAL, clear, group);
   const props = new THREE.Mesh(mergeGeometries(geos), caustics(new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.8, side: THREE.DoubleSide }), 0.4));
   group.add(props);
   const kelp = kelpForest(zone, spot, R, base, rand);
@@ -675,6 +753,31 @@ export function makeWreck(rand) {
   }
   const mesh = new THREE.Mesh(mergeGeometries(geos), woodMat);
   return { mesh, circles, shard: { x: 0, y: floor + 95 }, holes: [{ x: -470, y: floor + 150, dir: -1 }, { x: 0, y: floor + 95, dir: 1 }, { x: 450, y: floor + 165, dir: 1 }] };
+}
+
+// A lair apex's home: a rock mound on the floor around x = 0 with three dark holes (left, right and on top) it
+// strikes out of. Returns the mesh, collision circles (the mound), and the holes (dir: the side it strikes towards;
+// 0 = towards you).
+const lairMat = caustics(new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.9 }), 0.35);
+const holeMat = new THREE.MeshBasicMaterial({ color: 0x050a0d });
+export function makeLair(rand) {
+  const R = (a, b) => a + rand() * (b - a), floor = -WORLD.y - 20, geos = [];
+  const circles = [{ x: 0, y: floor + 260, r: 380 }, { x: -330, y: floor + 150, r: 240 }, { x: 330, y: floor + 170, r: 240 }, { x: 0, y: floor + 560, r: 230 }];
+  for (const c of circles) for (let k = 0; k < 7; k++) { // lumpy rock filling each circle
+    const a = R(0, Math.PI * 2), d = R(0, c.r * 0.45), r = c.r * R(0.55, 0.8);
+    geos.push(colored(new THREE.DodecahedronGeometry(1, 0), k % 2 ? 0x56616b : 0x4a545d, M(c.x + Math.cos(a) * d, c.y + Math.sin(a) * d, R(-60, 60), R(0, 3), R(0, 3), R(0, 3), r, r, r * 0.85)));
+  }
+  for (let k = 0; k < 6; k++) geos.push(colored(new THREE.ConeGeometry(10, R(120, 260), 4).translate(0, 100, 0), 0x3f7a4a, M(R(-500, 500), floor + R(0, 80), R(80, 200), 0, 0, R(-0.3, 0.3))));
+  const holes = [{ x: -560, y: floor + 170, dir: -1 }, { x: 560, y: floor + 190, dir: 1 }, { x: 0, y: floor + 790, dir: 0 }];
+  const mesh = new THREE.Group();
+  mesh.add(new THREE.Mesh(mergeGeometries(geos), lairMat));
+  for (const h of holes) { // a dark cave mouth on the rock's face, turned the way the eel comes out
+    const m = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 10), holeMat);
+    m.scale.set(70, 80, 170);
+    m.position.set(h.x * 0.93, h.y - (h.dir ? 0 : 25), 40);
+    mesh.add(m);
+  }
+  return { mesh, circles, holes };
 }
 
 // A glowing crystal shard, and a sparkle that shows where it is once you're close.

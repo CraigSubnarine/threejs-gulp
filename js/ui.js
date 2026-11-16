@@ -179,8 +179,9 @@ function openTree() {
   drawTree();
   showScreen('tree');
 }
-const ROW_H = 74; // px between rows of hexagons
+let ROW_H = 74; // px between rows of hexagons (less on a phone held upright)
 function drawTree() {
+  ROW_H = innerWidth <= 640 ? 54 : 74;
   const i = game.info, owned = i.owned;
   $('treeTitle').textContent = `LEVEL ${i.level} CLEAR!`;
   $('treePoints').textContent = `${i.points} skill point${i.points === 1 ? '' : 's'} to spend`;
@@ -229,9 +230,9 @@ function drawTree() {
     $('treeDetail').innerHTML = `<b style="color:${sel.branch.color}">${sel.name}</b>: ${sel.desc}. ${why}`; // game data only
     learn.hidden = have;
     learn.disabled = !canBuy(owned, sel.id, i.points);
-    learn.textContent = `Learn for ${cost} point${cost > 1 ? 's' : ''}`;
+    learn.textContent = `Learn (${cost} pt${cost > 1 ? 's' : ''})`;
   }
-  $('treeCombos').innerHTML = '<b>Combos</b> ' + COMBOS.map(c => { // game data only
+  $('treeCombos').innerHTML = COMBOS.map(c => { // game data only
     const on = c.needs.every(n => owned.includes(n));
     return `<span class="${on ? 'on' : ''}">${on ? '&#10003; ' : ''}<b>${c.name}</b> (${c.needs.map(skillName).join(' + ')}): ${c.desc}</span>`;
   }).join('');

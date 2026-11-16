@@ -13,7 +13,7 @@
 const WORLD = { x: 6600, y: 1400 };   // half-width and half-height (a wide sea to explore, about 7 screens across)
 // Rock pillars and arches on the play plane: you and the fish can't swim through them, so prey can be cornered
 // against them (and you can hide behind them). count per level; clear: no obstacles this close to where you start.
-const OBSTACLES = { count: 13, clear: 1400 };
+const OBSTACLES = { count: 13, clear: 1400, crackedEvery: 3 }; // every 3rd pillar is cracked: boost into it to smash it
 const VIEW_H = [0, 1280, 1650, 2100]; // how much of the plane the camera shows (height) at your tier 1, 2, 3
 // tilt: degrees the camera looks down on the sea; sway: degrees it swings round as you swim sideways;
 // lead: seconds of your movement it looks ahead.
@@ -119,10 +119,11 @@ const ZONES = [
     // size: × a full-grown you; speed: circling speed × your base speed (apexes that chase); lunge: dash speed × your base speed;
     // tell: seconds of shaking before a lunge. Taunts are original lines.
     // lair: it lives in the level's wreck and strikes out of its holes (attacks: ambush, double) instead of chasing.
-    apex: { key: 'moray', name: 'The Giant Moray', short: 'Moray', size: 3.2, hp: 6, lunge: 2.6, tell: 0.9, lair: true,
+    // touch: its body's radius for bites, × its length (a slim serpent).
+    apex: { key: 'moray', name: 'The Giant Moray', short: 'Moray', size: 4.2, hp: 6, lunge: 2.6, tell: 0.9, lair: true, touch: 0.07,
       phases: [['ambush'], ['ambush', 'double']],
       intro: 'You swam into MY wreck? Bold little snack.', rage: 'OW! Right, no more hiding.', defeat: 'Fine... the wreck is yours.',
-      spec: { shape: 'long', body: 0x5f7f2c, belly: 0xd0dc80, fin: 0x445f1f, stripe: 0x34491a, stripes: [-0.32, -0.2, -0.08, 0.04, 0.16], eye: 0.75, teeth: true } }, // thicker than a reef moray, with a small mean eye
+      spec: { shape: 'eel', serpent: true, thick: 0.05, body: 0x5f7f2c, belly: 0xd0dc80, fin: 0x445f1f, stripe: 0x3a5418 } }, // a long rippling serpent (makeSerpent in art.js)
     // The reef's size ladder, smallest first. Level 1 shows ranks 0-3, level 2 ranks 1-5 (1 = leftover snacks),
     // level 3 ranks 3-7, level 4 ranks 5-9, level 5 ranks 7-11. puffBy: how many sizes a puffer grows when it puffs up.
     fish: [

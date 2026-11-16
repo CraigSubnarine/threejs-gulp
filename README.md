@@ -31,7 +31,7 @@ No build step and no asset files: three.js loads from a CDN through an import ma
   - Under the hood, every level is built at the same scale. The game rescales everything by 200/70 behind the fade (one level = two ranks), so the numbers never blow up.
 - **Early growth is quick:** a tiny fish gives 1.75 growth, so about 12 bites to your first size-up. While you're at your smallest, 70% of what spawns is food.
 - **One life:** if a bigger fish catches you, the run is over, unless a skill or a shield saves you.
-- **A wide sea:** about 7 screens across. Rock pillars and arches stand on the play plane: you and the fish can't swim through them, so a fleeing fish can be cornered against one (calm fish swim round them; panicking ones don't).
+- **A wide sea:** about 7 screens across. Rock pillars and arches stand on the play plane: you and the fish can't swim through them, so a fleeing fish can be cornered against one (calm fish swim round them or turn back; panicking ones don't). Every third pillar is **cracked** (sandy and blotchy): boost into it and the whole pillar smashes.
 - **Oysters** (2 per level) sit on the sea floor:
   - **The cycle:** each one opens to show a pearl, shivers, then snaps shut.
   - **Pearls:** a white pearl is worth 500 × the level and a black one 2,500 × the level.
@@ -56,10 +56,10 @@ No build step and no asset files: three.js loads from a CDN through an import ma
   5. The Drop-off
 
   After level 5 comes the apex, then the portal (or another lap of the reef, if you're missing shards).
-- **The apex predator (the Giant Moray):** filling level 5's meter wakes it in the level's wreck. An arrow points the way, and the other fish clear off.
+- **The apex predator (the Giant Moray):** a long, rippling serpent. Filling level 5's meter wakes it in its own rock with three holes, on the other side of the sea from the wreck (so the shard stays easy to reach). An arrow points the way, and the other fish clear off.
   - **Its tail is where you bite it.** Each bite takes 1 health, and boosting into it takes 2 (the boost button works during the fight; it used not to).
   - **Its jaws** (the front 40% of its body) eat you, unless a shield or Second Wind saves you.
-  - **How it fights:** it hides in one of the wreck's three holes. That hole shakes and bubbles with a red "!", then it strikes out at you, stays stretched out for about 2 s (its tail still in the hole: bite it there), and pulls back in.
+  - **How it fights:** it hides in one of its rock's three holes. That hole shakes and bubbles with a red "!", then it strikes out at you, stays stretched out for about 2 s (its tail still in the hole: bite it there), and pulls back in.
   - **Phase 2:** at half health it gets angry, moves faster, and sometimes strikes from two holes in a row.
   - **Beating it** pays 3,000 × the level, plus a bonus skill point.
   - It's data plus an attack library (`apex` in `data.js`, `APEX_ATTACKS`). Chasing apexes use `lunge`/`flurry`; lair apexes (`lair: true`) use `ambush`/`double`.
@@ -103,7 +103,7 @@ No build step and no asset files: three.js loads from a CDN through an import ma
   | Spiny | stings you for a moment, but gives ×2 growth |
   | Speedy | fast and jumpy, ×2 points |
   | Giant | one size bigger |
-- **Skill tree:** three dark panels, Scales (green, survive), Jaws (red, hunt) and Fins (yellow, speed). Each is a web of 10 glowing hexagons under its emblem. On a phone held upright the panels are tabs.
+- **Skill tree:** three dark panels, Scales (green, survive), Jaws (red, hunt) and Fins (yellow, speed). Each is a web of 10 glowing hexagons under its emblem. On a phone held upright the panels are tabs, with smaller hexagons, so the tree, a tapped skill's description and the Learn and Next buttons fit on one screen.
   - **Unlocking:** a node opens once you own *any* node joined to it above, so paths split and join again. Cost goes by row (1, 1, 2, 3, 4).
   - **Points:** 1 per level, 1 per 5 pearls and 1 per apex, about 10 a world. A branch costs about 23 and the tree about 70, so each world you pick a direction. Unspent points carry over.
   - **Capstones:** Second Wind, Gulp, Torpedo.

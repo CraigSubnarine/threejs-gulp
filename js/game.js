@@ -1,7 +1,7 @@
 // Gulp! game: the 3D scene, the camera, the player, the fish and the HUD. Loaded last, as a module. The rules
 // (who eats whom, growth, score, spawns, skills, classes) live in rules.js; this file moves things and draws them.
 import * as THREE from 'three';
-import { makeFish, makeIcons, makeZone, waterAt, makeWarn, bubbleTexture, water, makeOyster, makePickup, makeWreck, makeShard, makePortal } from './art.js';
+import { makeFish, makeIcons, makeZone, waterAt, makeWarn, bubbleTexture, water, makeOyster, makePickup, makeWreck, makeShard, makePortal, makeLair } from './art.js';
 
 const FOV = 45, DEG = Math.PI / 180, TAN = Math.tan(FOV / 2 * DEG);
 const MAX_ASPECT = 2.3; // a phone held sideways fills its screen; only very wide screens get side bars
@@ -168,12 +168,12 @@ function updateHud() {
   shardArrow();
 }
 
-// An arrow at the edge of the screen pointing the way to the level's shard (Shard Sense) or to a lair apex's wreck,
+// An arrow at the edge of the screen pointing the way to the level's shard (Shard Sense) or to a lair apex's rock,
 // while it's off screen.
 function shardArrow() {
   const el = $('shardArrow');
   let show = false;
-  const target = G.apex?.mode === 'lurk' ? G.wreck : G.stats.shardSense && G.phase === 'swim' ? G.shard : null;
+  const target = G.apex?.mode === 'lurk' ? G.lair : G.stats.shardSense && G.phase === 'swim' ? G.shard : null;
   if (target) {
     tmp.set(target.x, target.y, 0).project(camera);
     if (Math.abs(tmp.x) > 0.92 || Math.abs(tmp.y) > 0.92) {
@@ -224,12 +224,23 @@ function startLevel() {
   // The wreck hiding this level's shard: somewhere out in the wide sea, a different place each run.
   const wr = mulberry32(hashSeed(`${G.seed}/${G.level}/wreck`)), side = wr() < 0.5 ? -1 : 1;
   const wreckX = side * Math.min(WORLD.x - 1300, WORLD.x * (SHARDS.wreckFrom + wr() * 0.5));
-  G.scenery = makeZone(G.zone, G.spot, scene, mulberry32(hashSeed(`${G.zone.key}/${G.index}`)), [wreckX]);
+  // A lair apex (the Giant Moray) gets its own holed rock on the zone's last level, on the other side from the wreck,
+  // so the fight never gets in the way of the shard.
+  const lairX = G.zone.apex.lair && G.index === LEVELS_PER_ZONE - 1 ? -side * Math.min(WORLD.x - 1200, WORLD.x * 0.55) : null;
+  G.scenery = makeZone(G.zone, G.spot, scene, mulberry32(hashSeed(`${G.zone.key}/${G.index}`)), lairX === null ? [wreckX] : [wreckX, lairX]);
   const wreck = makeWreck(wr);
   wreck.mesh.position.x = wreckX;
   G.scenery.group.add(wreck.mesh);
   G.circles = [...G.scenery.circles, ...wreck.circles.map(c => ({ ...c, x: c.x + wreckX }))]; // rocks and wreckage on the play plane
-  G.wreck = { x: wreckX, y: wreck.shard.y, holes: wreck.holes.map(h => ({ ...h, x: h.x + wreckX })) };
+  G.wreck = { x: wreckX, y: wreck.shard.y };
+  G.lair = null;
+  if (lairX !== null) {
+    const lair = makeLair(wr);
+    lair.mesh.position.x = lairX;
+    G.scenery.group.add(lair.mesh);
+    G.circles.push(...lair.circles.map(c => ({ ...c, x: c.x + lairX })));
+    G.lair = { x: lairX, y: -WORLD.y + 450, holes: lair.holes.map(h => ({ ...h, x: h.x + lairX })) };
+  }
   G.shard = null;
   if (G.mode === 'play' && !G.shards.has(G.index)) { // already found on an earlier lap: no shard this time
     const sh = makeShard();
@@ -278,8 +289,9 @@ function spawnFish(species, x, y, dir, variant = null) {
   const tier = species.tier + (variant === 'giant' ? VARIANTS.giant.tier : 0);
   const f = { s: species, variant, tier, x, y, vx: dir * species.speed, vy: 0, dir, face: dir, len: fishLen(tier) * (species.behavior === 'puff' ? 0.9 : 1),
     obj: makeFish(species, variant), phase: Math.random() * 6, wob: Math.random() * 6, chase: 0, rest: 0, puff: 0, puffT: -2, warn: null,
-    baseTier: tier, stun: 0, shrink: 0, sk: 1 }; // stun: Shock power-up; shrink: Shrink power-up (one size smaller), sk: its drawn scale
+    baseTier: tier, stun: 0, shrink: 0, sk: 1, stuck: 0 }; // stun: Shock power-up; shrink: Shrink power-up (one size smaller), sk: its drawn scale
   f.obj.yaw.rotation.y = yawFor(dir);
+  if (G.circles) pushOut(f, f.len * SHAPE_R[species.shape], G.circles); // never born inside a rock
   scene.add(f.obj.root);
   G.fish.push(f);
   return f;
@@ -376,7 +388,8 @@ function updatePlayer(dt) {
     P.vy += (s.y * speed - P.vy) * Math.min(1, dt * turn);
     P.x = clamp(P.x + P.vx * dt, -WORLD.x + 40, WORLD.x - 40);
     P.y = clamp(P.y + P.vy * dt, -WORLD.y + P.len * 0.25, WORLD.y - P.len * 0.25);
-    pushOut(P, P.len * SHAPE_R[G.cls.spec.shape], G.circles); // rocks: slide along them
+    const vx0 = P.vx, vy0 = P.vy, rock = pushOut(P, P.len * SHAPE_R[G.cls.spec.shape], G.circles); // rocks: slide along them
+    if (rock?.crack !== undefined && P.boost > 0) { smash(rock.crack); P.vx = vx0; P.vy = vy0; } // boosting into a cracked pillar: straight through it
   }
   P.len += (fishLen(P.tier) - P.len) * Math.min(1, dt * 4);
   P.pulse = Math.max(0, P.pulse - dt * 5);
@@ -458,7 +471,9 @@ function updateFish(f, dt) {
   f.y += f.vy * dt;
   const lim = WORLD.y - f.len * 0.3;
   if (Math.abs(f.y) > lim) { f.y = Math.sign(f.y) * lim; f.vy = 0; }
-  pushOut(f, f.len * SHAPE_R[f.s.shape] * (1 + 0.7 * f.puff), G.circles);
+  if (pushOut(f, f.len * SHAPE_R[f.s.shape] * (1 + 0.7 * f.puff), G.circles) && rate < 5) { // a calm fish stuck on a rock turns back
+    if ((f.stuck += dt) > 0.4) { f.dir = -f.dir; f.stuck = 0; }
+  } else f.stuck = 0;
   pose(f, dt);
   if (stunned) f.obj.pitch.rotation.x = 1.3; // rolled on its side
   f.sk += ((small ? 0.55 : 1) - f.sk) * Math.min(1, dt * 6);
@@ -496,6 +511,22 @@ function sting(f) {
   popup('STUNG!', P.x, P.y + P.len * 0.8, 'ouch');
   beep(900, 120, 0.05, 'sawtooth', 0.4);
   buzz(70);
+}
+
+// Boosting into a cracked pillar smashes the whole pillar: its rocks burst apart and the way is open.
+function smash(id) {
+  const parts = G.circles.filter(c => c.crack === id);
+  G.circles = G.circles.filter(c => c.crack !== id);
+  for (const c of parts) {
+    c.mesh.visible = false;
+    burst(c.x, c.y, 10, c.r * 1.5);
+  }
+  const pts = 50 * G.level;
+  G.score += pts;
+  popup(`SMASH! +${pts}`, P.x, P.y + P.len, 'combo');
+  boom(500, 0.14);
+  beep(110, 260, 0.08, 'sawtooth', 0.5);
+  buzz(120);
 }
 
 // Touching: bigger eats smaller, the same size bumps. Skills bend it: Torpedo eats your own size while
@@ -720,20 +751,20 @@ function levelCleared(title = 'LEVEL CLEAR!', note = '') {
   jingle([523, 659, 784, 1047, 1319], 110);
   buzz(120);
 }
-// ---------- A lair apex: the Giant Moray in its wreck ----------
-// It hides in one of the wreck's holes. A hole glows and shakes (the tell), then it strikes out towards you and stays
+// ---------- A lair apex: the Giant Moray in its rock ----------
+// It hides in one of its rock's holes. A hole glows and shakes (the tell), then it strikes out towards you and stays
 // stretched out for a moment, tail end still in the hole: bite it there! Then it pulls back in and picks a hole.
 function updateLair(A, dt) {
-  const a = A.a, rage = A.stage > 0 ? 1.35 : 1, len = A.len, holes = G.wreck.holes;
+  const a = A.a, rage = A.stage > 0 ? 1.35 : 1, len = A.len, holes = G.lair.holes;
   const out = k => { // its body k of the way out of the hole (0 hidden, 1 fully out), along its heading
     A.x = A.hole.x + A.hx * len * (k - 0.5);
     A.y = A.hole.y + A.hy * len * (k - 0.5);
   };
-  if (A.mode === 'lurk') { // waiting for you to come to the wreck
-    if (Math.hypot(P.x - G.wreck.x, P.y - G.wreck.y) < 1100) {
+  if (A.mode === 'lurk') { // waiting for you to come to its rock
+    if (Math.hypot(P.x - G.lair.x, P.y - G.lair.y) < 1300) {
       A.mode = 'hide';
       A.t = 1.2;
-      popup(`"${a.intro}"`, G.wreck.x, G.wreck.y + 420, 'taunt');
+      popup(`"${a.intro}"`, G.lair.x, G.lair.y + 600, 'taunt');
       boom(500, 0.1);
     }
   } else if (A.mode === 'hide' && A.t <= 0) { // pick a hole (the nearest to you, or another one)
@@ -747,7 +778,8 @@ function updateLair(A, dt) {
   } else if (A.mode === 'tell') { // the hole shakes and bubbles
     if (Math.random() < dt * 30) burst(A.hole.x + (Math.random() - 0.5) * 160, A.hole.y + 40, 1, 60);
     if (A.t <= 0) { // strike towards where you are, but no steeper than it can pose
-      const p = clamp(Math.atan2(P.y - A.hole.y, Math.abs(P.x - A.hole.x)), -0.6, 0.6), side = Math.sign(P.x - A.hole.x) || A.hole.dir;
+      const side = A.hole.dir || Math.sign(P.x - A.hole.x) || 1; // out of the rock's face, never back through it
+      const p = clamp(Math.atan2(P.y - A.hole.y, Math.max(1, (P.x - A.hole.x) * side)), A.hole.dir ? -0.6 : 0, 0.6);
       Object.assign(A, { hx: side * Math.cos(p), hy: Math.sin(p), face: side, mode: 'lunge', t: 1 / (a.lunge * PLAYER.speed * rage / len) });
       out(0);
       boom(200, 0.06);
@@ -774,6 +806,12 @@ function updateLair(A, dt) {
   pose(A, dt);
   A.obj.root.scale.setScalar(A.len);
   A.obj.mats.body.emissive.setRGB(A.flash, 0, 0);
+  A.obj.mats.stripe?.emissive.setRGB(A.flash, 0, 0);
+  if (A.obj.segs) { // it ripples like a snake, faster when it strikes; the jaw gapes while it's out
+    const fast = A.mode === 'lunge' ? 14 : 6, n = A.obj.segs.length;
+    A.obj.segs.forEach((g, i) => { g.position.y = Math.sin(G.t * fast - i * 0.55) * 0.022 * (0.2 + i / n); g.position.z = Math.cos(G.t * fast * 0.7 - i * 0.5) * 0.02 * (i / n); });
+    A.obj.jaw.rotation.z += ((seen && A.mode !== 'retract' ? -0.45 : 0) - A.obj.jaw.rotation.z) * Math.min(1, dt * 10);
+  }
   A.warn.visible = A.mode === 'tell';
   if (A.hole) A.warn.position.set(A.hole.x, A.hole.y + 170, 30);
   if (seen && G.phase === 'apex' && P.alive) apexTouch(A);
@@ -792,14 +830,14 @@ function startApex() {
   G.apex = { a, obj, warn, s: { name: a.short }, len, hp, maxHp: hp, stage: 0, phase: 0, mode: 'enter', t: 1.6, left: 0, inv: 0, flash: 0,
     x: P.x + side * ((view.x1 - view.x0) / 2 + len * 0.6), y: clamp(P.y + 150, -WORLD.y + len * 0.2, WORLD.y - len * 0.2),
     vx: -side * 400, vy: 0, face: -side, ang: Math.atan2(150, side * 600), spin: Math.random() < 0.5 ? 1 : -1, hole: null, hx: 1, hy: 0 };
-  if (a.lair) { // it waits inside the wreck until you come to it
-    Object.assign(G.apex, { mode: 'lurk', x: G.wreck.x, y: G.wreck.y });
+  if (a.lair) { // it waits inside its rock until you come to it
+    Object.assign(G.apex, { mode: 'lurk', x: G.lair.x, y: G.lair.y });
     obj.root.visible = false;
   }
   G.phase = 'apex';
   removePickup();
   Object.assign(P, { tier: 3, safe: 1.5, boost: 0 });
-  banner(a.name.toUpperCase(), a.lair ? 'Something huge lives in the wreck. Follow the arrow.' : `"${a.intro}"`, 3200);
+  banner(a.name.toUpperCase(), a.lair ? 'Something huge lives in the rock with the holes. Follow the arrow.' : `"${a.intro}"`, 3200);
   $('bossName').textContent = a.name;
   $('boss').hidden = false;
   shown.boss = null;
@@ -910,7 +948,7 @@ function updateApex(dt) {
 }
 // You bite its tail; its jaws bite you; anything else just pushes you apart.
 function apexTouch(A) {
-  const { hx, hy } = apexHeading(A), r = A.len * 0.11; // about half its body height
+  const { hx, hy } = apexHeading(A), r = A.len * (A.a.touch ?? 0.11); // about half its body height
   const bite = apexContact(A.x, A.y, hx, hy, A.len, r, P.x, P.y, P.len * SHAPE_R.oval * G.stats.reach);
   const me = apexContact(A.x, A.y, hx, hy, A.len, r, P.x, P.y, P.len * SHAPE_R[G.cls.spec.shape]);
   if (bite === 'tail' && A.inv <= 0) return biteApex(A);
