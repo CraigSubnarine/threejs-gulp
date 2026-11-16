@@ -23,8 +23,9 @@ function installHarness() {
   window.__step = n => { for (let i = 0; i < n; i++) { if (['playing', 'over', 'menu'].includes(app.state)) game.update(1 / 60); } game.render(); };
   window.__P = () => game.G.player;
   window.__species = key => game.speciesAt(key); // sized for the current level (its tier there)
-  window.__food = () => game.G.levelFish.find(f => f.tier <= 0 && f.behavior !== 'puff').key; // the smallest fish on this level
-  window.__big = () => game.G.levelFish.filter(f => f.behavior !== 'puff').reduce((a, f) => (f.tier > a.tier ? f : a)).key; // its biggest
+  const plain = f => f.behavior !== 'puff' && f.behavior !== 'jelly';
+  window.__food = () => game.G.levelFish.find(f => f.tier <= 0 && plain(f)).key; // the smallest fish on this level
+  window.__big = () => game.G.levelFish.filter(plain).reduce((a, f) => (f.tier > a.tier ? f : a)).key; // its biggest
   window.__put = (key, dx, dy, dir = -1, variant = null) => game.spawnFish(__species(key), __P().x + dx, __P().y + dy, dir, variant);
   window.__clear = () => { game.G.fish.forEach(f => (f.x += 9000)); game.update(1 / 60); }; // send every fish far away (they despawn)
   // How tall the player looks on screen, as a share of the screen height.
@@ -33,7 +34,7 @@ function installHarness() {
     return Math.abs(b.y - a.y) / 2;
   };
   // Chips on the food chain bar must match: green below your tier, red above, grey at it.
-  window.__chipsOk = () => [...document.querySelectorAll('#chain .chip')].every(c => {
+  window.__chipsOk = () => [...document.querySelectorAll('#chain .chip[data-tier]')].every(c => {
     const t = Number(c.dataset.tier), p = __P().tier;
     return c.classList.contains(p > t ? 'food' : p < t ? 'danger' : 'same');
   });
@@ -47,7 +48,7 @@ function installHarness() {
       let best = null, bd = Infinity;
       for (const fish of game.G.fish) {
         const d = Math.hypot(fish.x - P.x, fish.y - P.y);
-        if (fish.tier < P.tier && d < bd) { bd = d; best = fish; }
+        if (fish.tier < P.tier && fish.s.behavior !== 'jelly' && d < bd) { bd = d; best = fish; }
       }
       input.stick = best ? { x: (best.x - P.x) / bd, y: (best.y - P.y) / bd } : { x: 0, y: 0 };
       game.update(1 / 60);
@@ -394,6 +395,7 @@ async function run(browser, name, options) {
   // ---------- Hazards: the puffer, the hunter ----------
   const puff = await page.evaluate(() => {
     __clear();
+    game.G.meter = METER_NEED / 3 + 1; // still tier 2, but far from clearing the level (eating passing fish could fill it, and a cleared level keeps you safe)
     const f = __put('puffer', 170, 0);
     __step(30);
     return { tier: f.tier, spikes: f.obj.spikes.scale.x };
@@ -433,7 +435,8 @@ async function run(browser, name, options) {
     __step(1);
     const dying = !__P().alive;
     __step(100);
-    return { dying, state: app.state, who: document.getElementById('overWho').textContent, best: store.get('gulp-best', {}).score };
+    const P = __P(), g = game.G;
+    return { dying, state: app.state, who: document.getElementById('overWho').textContent, best: store.get('gulp-best', {}).score, why: { phase: g.phase, safe: P.safe, tier: P.tier, shields: P.shields, wind: g.stats.secondWind - g.windUsed, x: Math.round(P.x), y: Math.round(P.y), near: g.fish.filter(f => Math.hypot(f.x - P.x, f.y - P.y) < 300).map(f => `${f.s.key}:${f.tier}`) } };
   });
   check(`${name}: a bigger fish eats you and the run ends`, dead.dying && dead.state === 'over' && dead.who.includes('Grouper'), JSON.stringify(dead));
   check(`${name}: the best score is saved`, dead.best > 0, String(dead.best));
@@ -545,7 +548,7 @@ async function run(browser, name, options) {
   // Hold it stretched out at the middle, facing right: its tail end is on the left, its jaws on the right.
   const hold = () => page.evaluate(() => { const A = game.G.apex; Object.assign(A, { mode: 'exposed', t: 9, x: 0, y: 0, hx: 1, hy: 0, face: 1, inv: 0, left: 0 }); Object.assign(__P(), { vx: 0, vy: 0, boost: 0 }); });
   await hold();
-  const bite1 = await page.evaluate(() => { const A = game.G.apex, P = __P(); P.x = -A.len / 2 - 10; P.y = 0; game.update(1 / 60); return A.hp; });
+  const bite1 = await page.evaluate(() => { const A = game.G.apex, P = __P(); Object.assign(A, { hp: A.maxHp, stage: 0 }); /* it may have been nipped while it struck around you */ P.x = -A.len / 2 - 10; P.y = 0; game.update(1 / 60); return A.hp; });
   check(`${name}: biting its tail takes off 1`, bite1 === 5, String(bite1));
   await hold();
   await page.evaluate(() => { const A = game.G.apex, P = __P(); Object.assign(P, { x: -A.len / 2 - 10, y: 0, face: 1, charge: 1 }); });
@@ -645,6 +648,68 @@ async function run(browser, name, options) {
   await page.evaluate(() => __step(90));
   await shot('14-world2');
   check(`${name}: opening a portal is remembered (it unlocks things)`, await page.evaluate(() => progress.portals >= 1 && progress.apexBeaten));
+
+  // ---------- World 2: the Kelp Forest ----------
+  const kelp = await page.evaluate(() => {
+    const g = game.G;
+    return { zone: g.zone.name, spot: g.spot.name, sub: document.getElementById('bannerSub').textContent, jellyChip: !!document.querySelector('#chain .chip.sting'), chips: __chipsOk(),
+      kelp: g.scenery.group.children.some(m => m.material?.customProgramCacheKey?.() === 'kelp'), where: document.getElementById('whereName').textContent };
+  });
+  check(`${name}: world 2 is the Kelp Forest, with swaying kelp and a jellyfish chip on the bar`, kelp.zone === 'Kelp Forest' && kelp.spot === 'Kelp Edge' && kelp.sub.includes('Kelp Forest') && kelp.kelp && kelp.jellyChip && kelp.chips && kelp.where.startsWith('World 2'), JSON.stringify(kelp));
+  const jelly = await page.evaluate(() => {
+    const P = __P();
+    __clear();
+    Object.assign(P, { safe: 0, stun: 0, stingT: 0, shields: 0 });
+    const j = __put('moonjelly', 15, 0);
+    game.update(1 / 60);
+    const small = { alive: P.alive, stun: P.stun > 0, there: game.G.fish.includes(j) };
+    for (let i = 0; i < 90; i++) game.update(1 / 60); // the sting wears off
+    P.tier = 3;
+    Object.assign(P, { x: j.x - 10, y: j.y, vx: 0, vy: 0 });
+    game.update(1 / 60);
+    const big = { alive: P.alive, stun: P.stun > 0, there: game.G.fish.includes(j) };
+    Object.assign(P, { tier: 1, safe: 1e6, stun: 0 });
+    return { small, big };
+  });
+  check(`${name}: a jellyfish stings (a stun, not death) and can't be eaten, even when you're bigger`, jelly.small.alive && jelly.small.stun && jelly.small.there && jelly.big.alive && jelly.big.stun && jelly.big.there, JSON.stringify(jelly));
+  await page.evaluate(() => { __clear(); __put('moonjelly', 220, 120, -1); __put('moonjelly', -260, -60, 1); __put('garibaldi', 160, -160, -1); __put('senorita', -200, 180, 1); __step(60); });
+  await shot('15-kelp');
+  for (const lv of [2, 3, 4, 5]) {
+    const st = await page.evaluate(() => __clearLevel());
+    if (st !== 'tree') { check(`${name}: clearing kelp level ${lv - 1} opens the tree`, false, st); break; }
+    await tap('#treeNext');
+    const info = await page.evaluate(() => { for (let i = 0; i < 60 && game.G.phase !== 'fadein'; i++) __step(1); __step(80); return { index: game.G.index, zone: game.G.zone.name, spot: game.G.spot.name, landmark: game.G.spot.landmark }; });
+    check(`${name}: kelp level ${lv} is ${info.spot}`, info.zone === 'Kelp Forest' && info.index === lv - 1, JSON.stringify(info));
+    await shot(`16-kelp${lv}`);
+  }
+  const leopard = await page.evaluate(() => {
+    for (let i = 0; i < 120 && game.G.phase !== 'swim'; i++) game.update(1 / 60);
+    const P = __P();
+    P.safe = 1e6;
+    game.G.meter = METER_NEED - 0.2;
+    __put(__food(), 5, 0);
+    __step(1);
+    P.safe = 1e6;
+    game.G.circles = []; // open water for the attack check
+    const A = game.G.apex;
+    if (!A) return { apex: false };
+    const name = document.getElementById('bossName').textContent;
+    A.a = { ...A.a, phases: [['charge'], ['charge']] }; // make it pick its charge
+    Object.assign(A, { mode: 'circle', t: 0 });
+    const seen = new Set();
+    let fast = 0, edge = false;
+    for (let i = 0; i < 60 * 10 && !(seen.has('lunge') && A.mode === 'recover'); i++) {
+      game.update(1 / 60);
+      seen.add(A.mode);
+      if (A.mode === 'tell' && A.warn.visible) edge = true;
+      if (A.mode === 'lunge') fast = Math.max(fast, Math.abs(A.vx));
+    }
+    return { apex: true, name, seen: [...seen], fast: +(fast / PLAYER.speed).toFixed(2), edge };
+  });
+  check(`${name}: the Kelp Forest's apex is the Leopard Shark`, leopard.apex && leopard.name === 'The Leopard Shark', JSON.stringify(leopard));
+  check(`${name}: its charge: it swims off screen, a "!" warns at the edge, then it charges straight across`, leopard.seen.includes('away') && leopard.seen.includes('tell') && leopard.edge && leopard.seen.includes('lunge') && leopard.fast > 2, JSON.stringify(leopard));
+  await page.evaluate(() => { const A = game.G.apex; A.a = { ...A.a, phases: [['charge'], ['charge']] }; Object.assign(A, { mode: 'circle', t: 0 }); for (let i = 0; i < 200 && A.mode !== 'tell'; i++) game.update(1 / 60); __step(20); });
+  await shot('17-leopard');
 
   // ---------- Classes ----------
   await tap('#pauseBtn');

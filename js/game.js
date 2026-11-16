@@ -33,15 +33,16 @@ function placeCamera() {
 // The part of the play plane on screen: where the four screen corners' rays hit z = 0. With a tilted camera it's a
 // trapezoid; this is its bounding box.
 const CORNERS = [[-1, -1], [1, -1], [-1, 1], [1, 1]];
-let view = { x0: -600, x1: 600, y0: -700, y1: 700 };
+let view = { x0: -600, x1: 600, y0: -700, y1: 700, xb0: -600, xb1: 600 };
 function viewRect() {
-  const r = { x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity };
+  const r = { x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity, xb0: Infinity, xb1: -Infinity };
   for (const [cx, cy] of CORNERS) {
     ndc.set(cx, cy);
     ray.setFromCamera(ndc, camera);
     if (!ray.ray.intersectPlane(plane, hit)) continue;
     r.x0 = Math.min(r.x0, hit.x); r.x1 = Math.max(r.x1, hit.x);
     r.y0 = Math.min(r.y0, hit.y); r.y1 = Math.max(r.y1, hit.y);
+    if (cy < 0) { r.xb0 = Math.min(r.xb0, hit.x); r.xb1 = Math.max(r.xb1, hit.x); } // the bottom edge: the narrowest part of the view
   }
   return r;
 }
@@ -116,16 +117,21 @@ function popup(text, x, y, kind = '') {
 // The food chain bar: one chip per size (tier) holding that size's fish, so it fits a phone however many species
 // a zone has. Green chips are food, red ones can eat you.
 function buildChain() {
+  const jellies = G.levelFish.filter(s => s.behavior === 'jelly');
   $('chain').replaceChildren(...[0, 1, 2, 3].map(t => {
-    const list = G.levelFish.filter(s => s.tier === t), chip = document.createElement('div');
+    const list = G.levelFish.filter(s => s.tier === t && s.behavior !== 'jelly'), chip = document.createElement('div');
     chip.dataset.tier = t;
     chip.title = list.map(s => (s.behavior === 'puff' ? `${s.name} (puffs up when you get close)` : s.name)).join(', ');
     chip.innerHTML = list.map(s => `<img src="${icons[s.key]}" alt="">`).join('') + `<i>${t}</i>`; // game data only
     return chip;
-  }));
+  }), ...(jellies.length ? [Object.assign(document.createElement('div'), { // jellyfish: never food, they sting
+    className: 'chip sting', title: `${jellies.map(s => s.name).join(', ')}: can't be eaten, and they sting`,
+    innerHTML: `${jellies.map(s => `<img src="${icons[s.key]}" alt="">`).join('')}<i>!</i>`, // game data only
+  })] : []));
 }
 function updateChain() {
   for (const chip of $('chain').children) {
+    if (!chip.dataset.tier) continue; // the jellyfish chip
     const t = Number(chip.dataset.tier);
     chip.className = `chip ${P.tier > t ? 'food' : P.tier < t ? 'danger' : 'same'}`;
   }
@@ -189,7 +195,7 @@ const G = { mode: 'menu', phase: 'swim', level: 1, zone: null, index: 0, spot: n
   world: 0, shards: new Set(), worldPearls: 0, wreck: null, shard: null, portal: null, newWorld: false }; // shards: level indexes (0-4) whose shard you have
 
 const P = { obj: null, x: 0, y: 0, vx: 0, vy: 0, len: fishLen(1), tier: 1, face: 1, pulse: 0, safe: 0, alive: false, phase: 0, gulp: 0, boost: 0, charge: 1,
-  stun: 0, shields: 0, gulps: 0, power: null, ghost: 0, regrowT: 0 }; // power: the timed power-up you have ({ kind, t })
+  stun: 0, shields: 0, gulps: 0, power: null, ghost: 0, regrowT: 0, stingT: 0 }; // power: the timed power-up you have ({ kind, t })
 G.player = P;
 function setClass(cls) { // a different kind of fish: a new model
   if (P.obj && G.cls === cls) return;
@@ -209,8 +215,9 @@ function startLevel() {
   removePortal();
   G.scenery?.dispose();
   let spot = info.spot;
-  if (G.world > 0) { // another world's ocean: the same kind of zone, its water tinted round the colour wheel
-    const w = spot.water ?? info.zone.water, hue = c => new THREE.Color(c).offsetHSL(SHARDS.worldHue * G.world, 0, 0).getHex();
+  const lap = Math.floor(G.world / ZONES.length);
+  if (lap > 0) { // the worlds have come round again: the same zone, its water tinted round the colour wheel
+    const w = spot.water ?? info.zone.water, hue = c => new THREE.Color(c).offsetHSL(SHARDS.worldHue * lap, 0, 0).getHex();
     spot = { ...spot, water: { top: hue(w.top), bottom: hue(w.bottom) } };
   }
   Object.assign(G, { zone: info.zone, index: info.index, spot, water: spot.water ?? info.zone.water });
@@ -358,6 +365,7 @@ function updatePlayer(dt) {
       if (G.stats.wake) for (const f of G.fish) if (!canEat(P, f) && Math.hypot(f.x - P.x, f.y - P.y) < P.len * 0.9 + f.len * 0.3) f.stun = Math.max(f.stun, 1.2); // Wake
     } else P.charge = Math.min(G.stats.boostCharges, P.charge + dt / (BOOST.recharge * G.stats.boostRecharge));
     P.ghost -= dt;
+    P.stingT -= dt;
     if (G.stats.regrow && P.shields < G.stats.shields) { // Regrow: a used shield grows back
       if ((P.regrowT += dt) >= G.stats.regrow) { P.shields++; P.regrowT = 0; popup('SHIELD REGROWN', P.x, P.y + P.len, 'combo'); }
     } else P.regrowT = 0;
@@ -392,6 +400,7 @@ function updateFish(f, dt) {
   if (f.stun > 0) f.stun -= dt;
   const stunned = f.stun > 0, small = f.shrink > 0 ? 2 : 0;
   if (s.behavior !== 'puff') f.tier = f.baseTier - small; // shrunk: from one size bigger than you to one size smaller, for a while
+  if (s.behavior === 'jelly') return driftJelly(f, dt, s.speed * speedAt(G.level));
   if (s.behavior === 'puff') { // swells up (and becomes dangerous) when you swim close, then slowly shrinks
     f.puffT -= dt;
     if (live && f.puffT <= -1.5 && d < 200 + P.len * 0.5) { f.puffT = 2.6; beep(220, 160, 0.04, 'sine', 2); }
@@ -460,12 +469,42 @@ function updateFish(f, dt) {
   }
 }
 
+// A jellyfish drifts in slow pulses (the bell squeezes, the tentacles trail). Nothing chases it or runs from it.
+function driftJelly(f, dt, sp) {
+  const beat = Math.max(0, Math.sin(G.t * 2.2 + f.wob)), k = Math.min(1, dt * 2);
+  f.vx += (f.dir * sp * (0.4 + beat) - f.vx) * k;
+  f.vy += ((Math.sin(G.t * 0.5 + f.wob) * 0.6 + beat * 0.5) * sp - f.vy) * k;
+  f.x += f.vx * dt;
+  f.y += f.vy * dt;
+  const lim = WORLD.y - f.len * 0.5;
+  if (Math.abs(f.y) > lim) { f.y = Math.sign(f.y) * lim; f.vy = 0; }
+  pushOut(f, f.len * SHAPE_R.jelly, G.circles);
+  const o = f.obj;
+  o.root.position.set(f.x, f.y, 0);
+  o.pitch.scale.set(1 + beat * 0.12, 1 - beat * 0.15, 1 + beat * 0.12);
+  o.tail.rotation.z = Math.sin(G.t * 1.5 + f.wob) * 0.25 - f.vx / 600;
+  o.tail.rotation.x = Math.cos(G.t * 1.2 + f.wob) * 0.2;
+  o.root.scale.setScalar(f.len * f.sk);
+}
+// A jellyfish sting: stunned for a moment and shoved away (Tough Skin halves it). It never eats you.
+function sting(f) {
+  P.stun = JELLY.stun * G.stats.stun;
+  P.stingT = JELLY.again;
+  const nx = (P.x - f.x) || 1, ny = P.y - f.y, m = Math.hypot(nx, ny);
+  P.vx = nx / m * JELLY.push;
+  P.vy = ny / m * JELLY.push;
+  popup('STUNG!', P.x, P.y + P.len * 0.8, 'ouch');
+  beep(900, 120, 0.05, 'sawtooth', 0.4);
+  buzz(70);
+}
+
 // Touching: bigger eats smaller, the same size bumps. Skills bend it: Torpedo eats your own size while
 // boosting, Gulp swallows one size bigger once per level.
 function collide() {
   const myR = P.len * SHAPE_R[G.cls.spec.shape], biteR = P.len * SHAPE_R.oval * G.stats.reach;
   for (const f of [...G.fish]) {
     const dx = f.x - P.x, dy = f.y - P.y, d = Math.hypot(dx, dy) || 1, fr = f.len * SHAPE_R[f.s.shape] * (1 + 0.7 * f.puff) * f.sk;
+    if (f.s.behavior === 'jelly') { if (P.safe <= 0 && P.stingT <= 0 && d < (myR + fr) * 0.8) sting(f); continue; } // never food, at any size
     const torpedo = G.stats.torpedo && P.boost > 0 && f.tier === P.tier, gulp = P.gulps > 0 && f.tier === P.tier + 1 && f.s.behavior !== 'puff';
     if ((canEat(P, f) || torpedo) && d < biteR * 1.15 + fr * 0.8) eat(f);
     else if (gulp && d < biteR * 1.15 + fr * 0.6) { P.gulps--; popup('GULP!', P.x, P.y + P.len, 'combo'); eat(f); }
@@ -782,6 +821,11 @@ function apexHeading(A) {
 }
 function nextAttack(A) {
   const list = A.a.phases[A.stage], kind = list[Math.floor(Math.random() * list.length)];
+  A.kind = kind;
+  if (kind === 'charge') { // first it swims off the side of the screen to line up
+    Object.assign(A, { mode: 'away', side: Math.sign(A.x - P.x) || 1, t: 1.3, left: 1 });
+    return;
+  }
   A.mode = 'tell';
   A.left = kind === 'flurry' ? 3 : 1;
   A.t = kind === 'flurry' ? 0.45 : A.a.tell / (A.stage > 0 ? 1.2 : 1);
@@ -810,6 +854,12 @@ function updateApex(dt) {
     tx = ex / e * sp;
     ty = ey / e * sp;
     if (A.t <= 0) nextAttack(A);
+  } else if (A.mode === 'away') { // off to the side of the screen, level with you, ready to charge
+    const ex = P.x + A.side * ((view.x1 - view.x0) / 2 + A.len * 0.55) - A.x, ey = P.y - A.y, e = Math.hypot(ex, ey) || 1, sp = base * 1.6 * rage;
+    tx = ex / e * sp;
+    ty = ey / e * sp;
+    rate = 4;
+    if (A.t <= 0) { A.mode = 'tell'; A.t = a.tell * 1.4 / rage; beep(500, 300, 0.04, 'square', 1.6); }
   } else if (A.mode === 'tell') { // stops, turns to face you and shakes: an attack is coming
     tx = dx / d * 25;
     ty = dy / d * 25;
@@ -820,6 +870,11 @@ function updateApex(dt) {
       A.vy = dy / d * sp;
       A.mode = 'lunge';
       A.t = A.left > 1 ? 0.32 : 0.55;
+      if (A.kind === 'charge') { // straight across the screen, through where you are
+        A.vx = Math.sign(dx || 1) * sp * 1.1;
+        A.vy = dy * 0.8;
+        A.t = (Math.abs(dx) + A.len) / (sp * 1.1);
+      }
       boom(200, 0.06);
       beep(150, 220, 0.05, 'sawtooth', 0.5);
     }
@@ -850,7 +905,7 @@ function updateApex(dt) {
   A.obj.mats.body.emissive.setRGB(A.flash, 0, 0); // flashes red when bitten
   A.warn.visible = A.mode === 'tell';
   const { hx, hy } = apexHeading(A); // the "!" sits over its head, where the bite comes from
-  A.warn.position.set(A.x + hx * A.len * 0.35, A.y + hy * A.len * 0.35 + A.len * 0.14 + 50, 30);
+  A.warn.position.set(clamp(A.x + hx * A.len * 0.35, view.xb0 + 80, view.xb1 - 80), clamp(A.y + hy * A.len * 0.35 + A.len * 0.14 + 50, view.y0 + 80, view.y1 - 200), 30); // at the screen edge if it's off screen
   if (G.phase === 'apex' && P.alive) apexTouch(A);
 }
 // You bite its tail; its jaws bite you; anything else just pushes you apart.

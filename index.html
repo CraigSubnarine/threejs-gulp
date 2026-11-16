@@ -53,6 +53,8 @@
   .chip i { position: absolute; right: -6px; bottom: -8px; font-style: normal; font-size: .75rem; font-weight: 800; background: var(--bad); border-radius: 8px; padding: 0 5px; text-shadow: none; }
   .chip.food i { background: var(--good); }
   .chip.same i { background: #6b8796; }
+  .chip.sting { border-color: #ff8ad8; background: rgb(255 138 216 / .25); }
+  .chip.sting i { background: #d84aa8; }
   #meterRow { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
   #youIcon { width: 42px; height: 28px; }
   #meter { position: relative; flex: 1; max-width: 300px; height: 14px; border-radius: 8px; background: rgb(0 30 50 / .45); border: 2px solid rgb(255 255 255 / .7); overflow: hidden; }
@@ -211,6 +213,7 @@
     <p class="hint"><b>Phone:</b> touch anywhere and drag, like a joystick. The further you drag, the faster you swim. Tap <b>BOOST</b> (bottom right) for a burst of speed; it takes a few seconds to recharge. <b>Computer:</b> your fish follows the mouse, or use the arrow keys or WASD. Click or press Space to boost.</p>
     <p class="hint">The bar at the top shows what you can eat (green) and what can eat you (red). Eat to fill your meter: you grow at each mark, and a full meter clears the level. One bite from a bigger fish and the run is over.</p>
     <p class="hint"><b>Oysters</b> on the sea floor open to show a pearl: grab it before the shell snaps shut (while you're small, the snap eats you). Every 5 pearls give a bonus skill point. <b>Bubbles</b> drifting down hold power-ups: Shock, Shrink, Rush and Bubble Shield.</p>
+    <p class="hint">In the <b>Kelp Forest</b> (behind the reef's portal), <b>jellyfish</b> drift about: you can never eat them, and touching one stings (you're stunned for a moment). They're on the pink chip at the end of the food chain bar.</p>
     <p class="hint">Each level hides a <b>shard</b> in a wreck out in the wide sea. Find all five before the apex and they make an orb that opens a <b>portal</b> to another world's ocean: you start small again but keep some skills. Miss one and the world starts over, faster.</p>
     <p class="hint">At the end of a zone its <b>apex predator</b> shows up. Bite its <b>tail</b> (boost into it for a double bite) and stay away from its <b>jaws</b>. When it shakes and a red "!" appears, it's about to lunge; right after a lunge it slows down, so that's your chance.</p>
     <button data-action="back">Back</button>

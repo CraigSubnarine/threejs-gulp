@@ -140,7 +140,39 @@ const pupilMat = new THREE.MeshStandardMaterial({ color: 0x111122, roughness: 0.
 
 // One fish at length 1, facing +x. root: position and size; yaw: which way it faces; pitch: nose up or down;
 // tail: wags. The game scales root by the fish's length. variant: null or a key of VARIANTS.
+// A jellyfish at size 1: a see-through glowing bell (pitch, which pulses) and tentacles that trail and wave (tail).
+// Same parts as a fish, so the game moves it the same way.
+const jellyCache = new Map();
+function makeJelly(spec) {
+  if (!jellyCache.has(spec.key)) {
+    const tent = [];
+    for (let i = 0; i < 9; i++) { // thin tentacles round the rim, and four frilly arms in the middle
+      const a = i / 9 * Math.PI * 2, len = 0.7 + (i % 3) * 0.15;
+      tent.push(new THREE.CylinderGeometry(0.012, 0.006, len, 4).translate(Math.cos(a) * 0.36, -len / 2, Math.sin(a) * 0.36));
+    }
+    for (let i = 0; i < 4; i++) {
+      const a = i / 4 * Math.PI * 2 + 0.4;
+      tent.push(new THREE.CylinderGeometry(0.05, 0.015, 0.55, 5).translate(Math.cos(a) * 0.08, -0.3, Math.sin(a) * 0.08));
+    }
+    jellyCache.set(spec.key, {
+      bell: new THREE.SphereGeometry(0.5, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2).scale(1, 0.75, 1),
+      tent: mergeGeometries(tent),
+      bellMat: new THREE.MeshStandardMaterial({ color: spec.body, emissive: spec.glow ?? 0x000000, transparent: true, opacity: 0.6, roughness: 0.2, side: THREE.DoubleSide, depthWrite: false }),
+      tentMat: new THREE.MeshStandardMaterial({ color: spec.fin, emissive: spec.glow ?? 0x000000, transparent: true, opacity: 0.7, roughness: 0.4, depthWrite: false }),
+    });
+  }
+  const j = jellyCache.get(spec.key), root = new THREE.Group(), yaw = new THREE.Group(), pitch = new THREE.Group(), tail = new THREE.Group();
+  root.add(yaw);
+  yaw.add(pitch);
+  pitch.add(new THREE.Mesh(j.bell, j.bellMat));
+  tail.add(new THREE.Mesh(j.tent, j.tentMat));
+  pitch.add(tail);
+  root.renderOrder = 2; // see-through: drawn after the solid things
+  return { root, yaw, pitch, tail, spikes: null, mats: { body: j.bellMat, fin: j.tentMat } };
+}
+
 export function makeFish(spec, variant = null) {
+  if (spec.shape === 'jelly') return makeJelly(spec);
   const p = partsFor(spec), sh = p.sh, mats = matsFor(spec, variant);
   const root = new THREE.Group(), yaw = new THREE.Group(), pitch = new THREE.Group(), tail = new THREE.Group();
   root.add(yaw);
@@ -236,6 +268,33 @@ const floorAt = (x, z, base) => base + 30 * Math.sin(x / 420) + 22 * Math.sin(z 
 export const waterAt = (water, y, c = new THREE.Color()) =>
   c.set(water.bottom).lerp(new THREE.Color(water.top), Math.min(1, Math.max(0, (y + WORLD.y) / (2 * WORLD.y))));
 
+// Kelp: tall strands from the sea floor towards the surface, with leaves along them, merged into one mesh. They
+// sway in the vertex shader (more the higher up), so a whole forest costs one draw call.
+const KELP_SWAY = `
+{ float kh = clamp((transformed.y + ${(WORLD.y + 70).toFixed(1)}) / 2800.0, 0.0, 1.0);
+  transformed.x += sin(uTime * 0.8 + transformed.x * 0.002 + transformed.z * 0.003) * 110.0 * kh * kh;
+  transformed.z += cos(uTime * 0.6 + transformed.x * 0.003) * 50.0 * kh * kh; }`;
+function kelpForest(zone, spot, R, base, rand) {
+  const geos = [], cols = zone.kelpColors ?? [0x7a8a2a];
+  for (let i = 0, n = Math.round((spot.kelp ?? 0) * WIDE); i < n; i++) {
+    const x = R(-SPAN, SPAN), z = R(-2700, -180), y0 = floorAt(x, z, base), h = R(0.45, 1) * (WORLD.y - y0 + 60), col = cols[Math.floor(rand() * cols.length)];
+    geos.push(colored(new THREE.CylinderGeometry(7, 12, h, 5, Math.ceil(h / 120)).translate(0, h / 2, 0), col, M(x, y0, z)));
+    for (let y = 80; y < h; y += R(70, 110)) { // leaves, alternating sides, drooping a little
+      const side = Math.round(y / 90) % 2 ? 1 : -1, lw = R(70, 120);
+      geos.push(colored(new THREE.PlaneGeometry(lw, R(18, 28), 2, 1).translate(lw / 2, 0, 0), col, M(x, y0 + y, z, R(-0.4, 0.4), side > 0 ? 0 : Math.PI, R(-0.6, -0.2))));
+    }
+  }
+  if (!geos.length) return null;
+  const mat = caustics(new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.75, side: THREE.DoubleSide }), 0.3);
+  const shade = mat.onBeforeCompile;
+  mat.onBeforeCompile = sh => {
+    shade(sh);
+    sh.vertexShader = `uniform float uTime;\n${sh.vertexShader}`.replace('#include <begin_vertex>', `#include <begin_vertex>${KELP_SWAY}`);
+  };
+  mat.customProgramCacheKey = () => 'kelp';
+  return new THREE.Mesh(mergeGeometries(geos), mat);
+}
+
 // Each level's landmark: big scenery that makes the spot recognisable, merged in with the other props.
 function landmark(kind, geos, R, base, rand, CORAL) {
   const at = (x, z) => floorAt(x, z, base), pick = () => CORAL[Math.floor(rand() * CORAL.length)];
@@ -276,6 +335,42 @@ function landmark(kind, geos, R, base, rand, CORAL) {
       const x = across(i, n, 40, R), z = R(-1500, -1250), h = R(500, 1100), r = R(140, 220), y0 = at(x, z);
       for (let y = y0; y < y0 + h; y += r * 1.1) geos.push(colored(new THREE.DodecahedronGeometry(1, 0), (i + Math.round(y / r)) % 2 ? 0x6d7f92 : 0x7a8ea0, M(x, y, z + R(-60, 60), R(0, 3), R(0, 3), R(0, 3), r, r * 0.8, r)));
       if (rand() < 0.7) geos.push(colored(new THREE.IcosahedronGeometry(1, 1), pick(), M(x, y0 + h, z + 40, 0, 0, 0, r * 0.8, r * 0.45, r * 0.8)));
+    }
+  } else if (kind === 'kelpEdge') { // where the forest ends: a line of boulders and sand ripples
+    for (let i = 0, n = Math.round(30 * WIDE); i < n; i++) {
+      const x = across(i, n, 120, R), z = R(-2400, -1600), r = R(120, 260);
+      geos.push(colored(new THREE.DodecahedronGeometry(1, 0), i % 2 ? 0x7d8a88 : 0x6c7a78, M(x, at(x, z) + r * 0.3, z, R(0, 3), R(0, 3), R(0, 3), r, r * 0.7, r)));
+    }
+    for (let i = 0, n = Math.round(60 * WIDE); i < n; i++) {
+      const x = R(-SPAN, SPAN), z = R(-1200, -200);
+      geos.push(colored(new THREE.CylinderGeometry(18, 18, 500, 4).rotateZ(Math.PI / 2), 0xe2d2a8, M(x, at(x, z) + 4, z, 0, R(-0.2, 0.2), 0, 1, 0.25, 1)));
+    }
+  } else if (kind === 'boulders') { // giant boulders with sea stars on them
+    for (let i = 0, n = Math.round(9 * WIDE); i < n; i++) {
+      const x = across(i, n, 300, R), z = R(-2000, -900), r = R(260, 460), y = at(x, z) + r * 0.4;
+      geos.push(colored(new THREE.DodecahedronGeometry(1, 1), 0x6f7d7a, M(x, y, z, R(0, 3), R(0, 3), R(0, 3), r, r * 0.75, r)));
+      for (let k = 0; k < 5; k++) {
+        const a = R(0, Math.PI * 2), s = R(30, 50);
+        geos.push(colored(new THREE.CircleGeometry(1, 5), k % 2 ? 0xff7a3a : 0xc04ab0, M(x + Math.cos(a) * r * 0.8, y + R(0, r * 0.5), z + Math.sin(a) * r * 0.6 + r * 0.3, R(-0.5, 0.5), 0, R(0, 3), s)));
+      }
+    }
+  } else if (kind === 'canopy') { // floating mats of kelp under the surface, where the strands reach the top
+    for (let i = 0, n = Math.round(40 * WIDE); i < n; i++) {
+      const x = R(-SPAN, SPAN), z = R(-2600, -300), r = R(160, 320);
+      geos.push(colored(new THREE.IcosahedronGeometry(1, 1), i % 2 ? 0x8a8a2e : 0x6f7a26, M(x, WORLD.y + R(20, 70), z, 0, R(0, 3), 0, r, 22, r * 0.6)));
+    }
+  } else if (kind === 'barren') { // spiny purple urchins all over the floor, and bare rock
+    const spike = new THREE.ConeGeometry(4, 40, 3).translate(0, 20, 0);
+    for (let i = 0, n = Math.round(160 * WIDE); i < n; i++) {
+      const x = R(-SPAN, SPAN), z = R(-2400, -150), r = R(18, 32), y = at(x, z) + r * 0.6;
+      geos.push(colored(new THREE.IcosahedronGeometry(1, 0), 0x5a2a7a, M(x, y, z, 0, R(0, 3), 0, r)));
+      for (let k = 0; k < 6; k++) geos.push(colored(spike.clone(), 0x7a3aa0, M(x, y, z, R(-1.4, 1.4), R(0, 6), R(-1.4, 1.4), r / 25)));
+    }
+  } else if (kind === 'stand') { // ancient kelp: thick old trunks rising to the surface
+    for (let i = 0, n = Math.round(14 * WIDE); i < n; i++) {
+      const x = across(i, n, 250, R), z = R(-2200, -1000), y0 = at(x, z), h = WORLD.y - y0 + 60;
+      geos.push(colored(new THREE.CylinderGeometry(22, 48, h, 6).translate(0, h / 2, 0), 0x5e6a1e, M(x, y0, z, 0, 0, R(-0.08, 0.08))));
+      geos.push(colored(new THREE.DodecahedronGeometry(1, 0), 0x4a4a2a, M(x, y0 + 20, z, 0, 0, 0, 90, 50, 90))); // its holdfast
     }
   }
 }
@@ -346,7 +441,7 @@ export function makeZone(zone, spot, scene, rand, clear = []) {
 
   // Coral, rocks and weed behind the play plane (z < 0); the camera's perspective gives them parallax.
   // The level sets how many props there are and how much of the mix is rock and weed.
-  const CORAL = [0xff6f91, 0xff9f43, 0xb36bff, 0xffd166, 0x5ee6b0, 0xff5e5e];
+  const CORAL = zone.palette ?? [0xff6f91, 0xff9f43, 0xb36bff, 0xffd166, 0x5ee6b0, 0xff5e5e]; // the kelp forest has its own: anemones and sponges
   const geos = [], kinds = [0.3, 0.2, 0.15, 0.1, 0.15 * (spot.rocks ?? 1), 0.1 * (spot.weed ?? 1)];
   const total = kinds.reduce((a, b) => a + b), cut = kinds.map((k, i) => kinds.slice(0, i + 1).reduce((a, b) => a + b) / total);
   for (let i = 0, n = Math.round((spot.coral ?? 150) * WIDE); i < n; i++) {
@@ -392,6 +487,8 @@ export function makeZone(zone, spot, scene, rand, clear = []) {
   const circles = obstacles(geos, R, rand, CORAL, clear);
   const props = new THREE.Mesh(mergeGeometries(geos), caustics(new THREE.MeshStandardMaterial({ vertexColors: true, flatShading: true, roughness: 0.8, side: THREE.DoubleSide }), 0.4));
   group.add(props);
+  const kelp = kelpForest(zone, spot, R, base, rand);
+  if (kelp) group.add(kelp);
 
   // Light rays from the surface: faint additive cones that sway.
   const rayMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.06, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, fog: false });

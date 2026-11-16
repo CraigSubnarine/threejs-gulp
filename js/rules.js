@@ -45,7 +45,7 @@ const atLevel = (f, index) => ({ ...f, tier: f.rank - RANKS_PER_LEVEL * index, p
 // Returns true if it touched one.
 function pushOut(e, r, circles) {
   let hit = false;
-  for (let pass = 0, moved = true; moved && pass < 6; pass++) { // a few passes: in the notch between two rocks, leaving one can push you into the other
+  for (let pass = 0, moved = true; moved && pass < 12; pass++) { // a few passes: in the notch between two rocks, leaving one can push you into the other
     moved = false;
     for (const c of circles) {
       const dx = e.x - c.x, dy = e.y - c.y, min = r + c.r;
@@ -62,6 +62,9 @@ function pushOut(e, r, circles) {
   }
   return hit;
 }
+
+// Puffers and jellyfish are special: never counted as plain food (a puffer puffs up; a jellyfish can't be eaten at all).
+const special = f => f.behavior === 'puff' || f.behavior === 'jelly';
 
 // The fish speed multiplier at a level (later levels are faster).
 const speedAt = level => 1 + TUNING.harder * (level - 1);
@@ -91,14 +94,14 @@ function makeSpawner(seed, zone, spot = {}, index = 0) {
     // playerTier decides what's food: about TUNING.edibleShare of spawns are fish you can eat right now (a bit
     // more while you're at your smallest). variantMul: Treasure Nose makes rare fish more common.
     next(playerTier, variantMul = 1) {
-      const food = fish.filter(f => f.tier < playerTier && f.behavior !== 'puff');
+      const food = fish.filter(f => f.tier < playerTier && !special(f));
       const rest = fish.filter(f => !food.includes(f));
       const share = playerTier <= 1 ? TUNING.edibleSmall : TUNING.edibleShare;
       const species = food.length && rand() < share ? pick(food) : pick(rest);
       const fromLeft = rand() < 0.5;
       const count = species.group ? species.group[0] + Math.floor(rand() * (species.group[1] - species.group[0] + 1)) : 1;
       let variant = null;
-      if (species.behavior !== 'puff' && rand() < VARIANT_CHANCE * variantMul) {
+      if (!special(species) && rand() < VARIANT_CHANCE * variantMul) {
         const kinds = species.tier < 3 ? ['golden', 'spiny', 'speedy', 'giant'] : ['golden', 'giant'];
         variant = kinds[Math.floor(rand() * kinds.length)];
       }

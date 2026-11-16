@@ -29,7 +29,7 @@ const COMBO_GAP = 1.5;                // seconds between eats that keeps a combo
 const COMBO_MAX = 8;
 const CLEAR_BONUS = 400;              // × the level number, when a level's meter fills
 const LEVELS_PER_ZONE = 5;
-const SHAPE_R = { oval: 0.3, disc: 0.36, fat: 0.33, long: 0.2, round: 0.38, torpedo: 0.24, eel: 0.15, orca: 0.3 }; // touch radius, as a share of length
+const SHAPE_R = { oval: 0.3, disc: 0.36, fat: 0.33, long: 0.2, round: 0.38, torpedo: 0.24, eel: 0.15, orca: 0.3, jelly: 0.34 }; // touch radius, as a share of length
 
 const PLAYER = {
   speed: 380,       // units per second at full stick
@@ -65,14 +65,17 @@ const APEX = {
   toughness: 0.5,   // each time round the zones, apexes get 50% more health
 };
 // lunge: shake, then dash at you; flurry: three quick short lunges; ambush (lair apexes): a hole glows and shakes, it
-// strikes out and stays stretched out (bite its tail!), then pulls back in; double: two holes in a row.
-const APEX_ATTACKS = ['lunge', 'flurry', 'ambush', 'double'];
+// strikes out and stays stretched out (bite its tail!), then pulls back in; double: two holes in a row; charge: it swims
+// off the side of the screen, a "!" shows at the edge, then it charges straight across.
+const APEX_ATTACKS = ['lunge', 'flurry', 'ambush', 'double', 'charge'];
 
 // Oysters on the sea floor (perLevel each level): closed, then open with a pearl showing, then a shiver (the tell),
 // then they snap shut (seconds for each). A pearl is worth white/black × the level in points and counts 1 or
 // blackPearls towards your next bonus skill point. The snap catches a fish of catchTier or smaller (that's the end
 // of the run, unless something saves you); a bigger you just gets pinched. size: the shell's width.
 const OYSTER = { perLevel: 2, closed: 3, open: 2.5, tell: 0.6, snap: 0.4, regrow: 15, white: 500, black: 2500, blackChance: 0.2, blackPearls: 3, catchTier: 1, pinch: 0.6, size: 170 };
+// Jellyfish stings: seconds stunned (× Tough Skin), seconds before another can sting, and how hard it shoves you.
+const JELLY = { stun: 1, again: 1.2, push: 450 };
 const PEARLS_PER_POINT = 5; // every 5 pearls: +1 skill point
 
 // Power-ups: a bubble drifts down from the top of the view about every `every` seconds (at most one at a time) and
@@ -105,6 +108,7 @@ const VARIANTS = {
 
 // shape: oval | disc (tall, flat) | fat (big head) | long (thin) | round (puffer) | torpedo (sharks) | eel
 // behavior: cruise (swims across) | school (comes in a group) | skittish (flees a bigger you) | hunter (chases a smaller you) | puff
+// | jelly (a jellyfish: drifts, can't be eaten at any size, and stings you on touch: JELLY)
 // rank: place on the zone's size ladder (see the top of this file); every rank 0-11 needs at least one species.
 // Each zone has LEVELS_PER_ZONE levels: its own spot with a look (water, floor, props, landmark) and a fish mix
 // (weights multiplied for that level).
@@ -159,6 +163,61 @@ const ZONES = [
         water: { top: 0x9ad9f0, bottom: 0x2a6fa8 }, floor: 0xe6d3b0, mix: { trevally: 1.5, humphead: 1.4 } },
       { name: 'The Drop-off', sub: 'The reef ends in a wall over deep blue', landmark: 'wall', coral: 140, rocks: 1, weed: 0.6, spires: 6, rays: 6,
         water: { top: 0x5fc4e6, bottom: 0x0b4a80 }, floor: 0xcfc0a0, mix: { whaleshark: 1.5, bullshark: 1.2 } },
+    ],
+  },
+  {
+    // World 2, through the portal. Its hazard is jellyfish: they can't be eaten, at any size, and touching one
+    // stings you (a stun and a shove). Kelp sways behind the play area; palette: the anemones and sponges.
+    key: 'kelp', name: 'Kelp Forest', sub: 'Tall, swaying and full of hiding places',
+    water: { top: 0x86dcc0, bottom: 0x0f4a52 }, sun: 1.5, sky: 0xd0ffe8, ground: 0x2a6a5a, floor: 0xc0b088,
+    palette: [0xc0504a, 0xe08a3a, 0x9a5ab8, 0xd8b04a, 0x5aa88a, 0xb83a5a], kelpColors: [0x7a8a2a, 0x9a8a32, 0x6a7a24],
+    // charge: it swims off the side of the screen, a "!" shows at the edge, then it charges straight across.
+    apex: { key: 'leopard', name: 'The Leopard Shark', short: 'Leopard Shark', size: 2.8, hp: 8, speed: 0.8, lunge: 2.6, tell: 0.7,
+      phases: [['lunge', 'charge'], ['lunge', 'flurry', 'charge']],
+      intro: 'Spots, teeth, and a forest full of snacks. All mine.', rage: 'Enough circling. Now I hunt.', defeat: 'The kelp... is yours...',
+      spec: { shape: 'torpedo', body: 0x9a9080, belly: 0xf2ede4, fin: 0x7a7060, stripe: 0x2a241c, stripes: [-0.32, -0.22, -0.12, -0.02, 0.08, 0.18], eye: 0.8, teeth: true, dorsal: 1.6 } },
+    // The kelp's size ladder, smallest first (two fish per rank, plus a jellyfish at ranks 1, 5 and 9).
+    fish: [
+      { key: 'anchovy', name: 'Anchovy', rank: 0, shape: 'long', body: 0x9fb8c8, belly: 0xf2f8fb, fin: 0x7f98a8, speed: 150, behavior: 'school', group: [5, 8], weight: 3 },
+      { key: 'blenny', name: 'Kelp Blenny', rank: 0, shape: 'long', body: 0x8a9a3a, belly: 0xd8e0a0, fin: 0x6a7a2a, speed: 90, behavior: 'skittish', weight: 1.5 },
+      { key: 'senorita', name: 'Señorita', rank: 1, shape: 'long', body: 0xf2c84a, belly: 0xfff0c0, fin: 0xd8a830, stripe: 0x5a3a20, stripes: [0.3], speed: 120, behavior: 'skittish', weight: 2 },
+      { key: 'surfperch', name: 'Surfperch', rank: 1, shape: 'disc', body: 0x8fa0b8, belly: 0xe0e8f0, fin: 0x6a7a90, stripe: 0x4a6a9a, stripes: [-0.15, 0, 0.15], speed: 110, behavior: 'school', group: [2, 4], weight: 1.8 },
+      { key: 'moonjelly', name: 'Moon Jelly', rank: 1, shape: 'jelly', body: 0xd8c8ff, belly: 0xffffff, fin: 0xb8a0ff, glow: 0x5a3a90, speed: 35, behavior: 'jelly', weight: 0.9 },
+      { key: 'garibaldi', name: 'Garibaldi', rank: 2, shape: 'oval', body: 0xff7a1a, belly: 0xffb060, fin: 0xff6a00, speed: 120, behavior: 'cruise', weight: 1.6 },
+      { key: 'kelpbass', name: 'Kelp Bass', rank: 2, shape: 'oval', body: 0x6a6a4a, belly: 0xd0c8a0, fin: 0x4a4a30, stripe: 0xc8c090, stripes: [-0.2, 0, 0.2], speed: 120, behavior: 'hunter', weight: 0.9 },
+      { key: 'rockfish', name: 'Blue Rockfish', rank: 3, shape: 'fat', body: 0x4a5a7a, belly: 0xa8b4c8, fin: 0x3a4a6a, speed: 90, behavior: 'cruise', group: [1, 3], weight: 1.3 },
+      { key: 'opaleye', name: 'Opaleye', rank: 3, shape: 'oval', body: 0x3a6a5a, belly: 0xa8c8b8, fin: 0x2a5a4a, speed: 130, behavior: 'school', group: [2, 4], weight: 1.3 },
+      { key: 'sheephead', name: 'Sheephead', rank: 4, shape: 'fat', body: 0x2a2a30, belly: 0xff8a8a, fin: 0x1a1a20, stripe: 0xe85a5a, stripes: [-0.1, 0.05], speed: 100, behavior: 'cruise', weight: 1.5 },
+      { key: 'cabezon', name: 'Cabezon', rank: 4, shape: 'fat', body: 0x7a5a3a, belly: 0xc8b088, fin: 0x5a4028, stripe: 0x4a3420, stripes: [-0.25, 0, 0.25], speed: 85, behavior: 'hunter', weight: 1 },
+      { key: 'halfmoon', name: 'Halfmoon', rank: 5, shape: 'disc', body: 0x4a6a9a, belly: 0xb8c8e0, fin: 0x3a5a8a, speed: 120, behavior: 'skittish', weight: 1.6 },
+      { key: 'lingcod', name: 'Lingcod', rank: 5, shape: 'long', body: 0x6a7a5a, belly: 0xc8d0b0, fin: 0x4a5a3a, stripe: 0x4a5432, stripes: [-0.3, -0.1, 0.1, 0.3], speed: 130, behavior: 'hunter', weight: 1, teeth: true },
+      { key: 'nettle', name: 'Sea Nettle', rank: 5, shape: 'jelly', body: 0xffb04a, belly: 0xffe0b0, fin: 0xd86a20, glow: 0x6a3010, speed: 30, behavior: 'jelly', weight: 0.9 },
+      { key: 'hornshark', name: 'Horn Shark', rank: 6, shape: 'torpedo', body: 0x8a7a5a, belly: 0xe0d8c0, fin: 0x6a5a40, stripe: 0x5a4a30, stripes: [-0.2, 0.1], speed: 100, behavior: 'hunter', weight: 1 },
+      { key: 'batray', name: 'Bat Ray', rank: 6, shape: 'disc', body: 0x3a3a3a, belly: 0xe8e8e8, fin: 0x2a2a2a, speed: 90, behavior: 'cruise', weight: 1.4 },
+      { key: 'seabass', name: 'Giant Sea Bass', rank: 7, shape: 'fat', body: 0x4a4a52, belly: 0xb8b8c0, fin: 0x34343a, stripe: 0x2a2a30, stripes: [-0.25, 0.05, 0.3], speed: 80, behavior: 'hunter', weight: 1 },
+      { key: 'yellowtail', name: 'Yellowtail', rank: 7, shape: 'oval', body: 0x7a9ab0, belly: 0xf0f4f8, fin: 0xffd23b, stripe: 0xffd23b, stripes: [0], speed: 170, behavior: 'school', group: [2, 4], weight: 1.5 },
+      { key: 'wolfeel', name: 'Wolf Eel', rank: 8, shape: 'eel', body: 0x7a8088, belly: 0xb8bcc0, fin: 0x5a6068, stripe: 0x3a4048, stripes: [-0.3, -0.15, 0, 0.15, 0.3], speed: 110, behavior: 'hunter', weight: 1, teeth: true },
+      { key: 'bonito', name: 'Bonito', rank: 8, shape: 'torpedo', body: 0x3a5a8a, belly: 0xe0e8f0, fin: 0x2a4a7a, stripe: 0x2a3a5a, stripes: [-0.2, -0.05, 0.1], speed: 180, behavior: 'skittish', weight: 1.6 },
+      { key: 'soupfin', name: 'Soupfin Shark', rank: 9, shape: 'torpedo', body: 0x7a8a96, belly: 0xeef0f2, fin: 0x5a6a76, speed: 140, behavior: 'hunter', weight: 1 },
+      { key: 'bluefin', name: 'Bluefin Tuna', rank: 9, shape: 'torpedo', body: 0x24406a, belly: 0xd8e4ee, fin: 0xffd23b, speed: 170, behavior: 'cruise', group: [1, 3], weight: 1.4 },
+      { key: 'lionsmane', name: 'Lion\'s Mane Jelly', rank: 9, shape: 'jelly', body: 0xe86a3a, belly: 0xffc0a0, fin: 0xb8401a, glow: 0x5a2010, speed: 25, behavior: 'jelly', weight: 0.7 },
+      { key: 'sevengill', name: 'Sevengill Shark', rank: 10, shape: 'torpedo', body: 0x6a6e5a, belly: 0xd8dac8, fin: 0x4e5240, stripe: 0x3a3e2e, stripes: [-0.25, 0, 0.2], speed: 125, behavior: 'hunter', weight: 1 },
+      { key: 'opah', name: 'Opah', rank: 10, shape: 'disc', body: 0xb84a5a, belly: 0xe8c0c8, fin: 0xff3b3b, speed: 90, behavior: 'cruise', weight: 1.3 },
+      { key: 'thresher', name: 'Thresher Shark', rank: 11, shape: 'torpedo', body: 0x5a6a8a, belly: 0xe8eef4, fin: 0x4a5a7a, speed: 140, behavior: 'hunter', weight: 1.1 },
+      { key: 'basking', name: 'Basking Shark', rank: 11, shape: 'torpedo', body: 0x5a5e66, belly: 0xc8ccd2, fin: 0x44484e, speed: 70, behavior: 'cruise', weight: 1 },
+    ],
+    // kelp: how many strands sway behind the play area.
+    levels: [
+      { name: 'Kelp Edge', sub: 'Where the forest meets the open sand', landmark: 'kelpEdge', kelp: 70, coral: 60, rocks: 1.2, weed: 1.5, spires: 6, rays: 9,
+        water: { top: 0x9ae4c8, bottom: 0x1a6a6a }, floor: 0xd8c8a0, mix: { anchovy: 1.5 } },
+      { name: 'Garibaldi Rocks', sub: 'Boulders, bright orange fish and sea stars', landmark: 'boulders', kelp: 110, coral: 70, rocks: 2, weed: 1, spires: 10, rays: 8,
+        water: { top: 0x86dcc0, bottom: 0x0f5a5a }, floor: 0xc8b890, mix: { garibaldi: 2, cabezon: 1.5 } },
+      { name: 'The Canopy', sub: 'Kelp all the way to the surface', landmark: 'canopy', kelp: 190, coral: 40, rocks: 1, weed: 2, spires: 5, rays: 12,
+        water: { top: 0x7ad4a8, bottom: 0x0c4a44 }, floor: 0xb8a878, mix: { seabass: 1.5, yellowtail: 1.5 } },
+      { name: 'Urchin Barren', sub: 'Purple urchins ate the forest here', landmark: 'barren', kelp: 30, coral: 30, rocks: 1.6, weed: 0.3, spires: 8, rays: 9,
+        water: { top: 0x8ac8d0, bottom: 0x14485a }, floor: 0xa8a090, mix: { wolfeel: 1.5, bonito: 1.4 } },
+      { name: 'The Deep Stand', sub: 'Ancient kelp in the cold and dark', landmark: 'stand', kelp: 150, coral: 50, rocks: 1, weed: 0.8, spires: 6, rays: 5,
+        water: { top: 0x5ab0a0, bottom: 0x082e3a }, floor: 0x9a9070, mix: { thresher: 1.3, sevengill: 1.3 } },
     ],
   },
 ];

@@ -12,14 +12,14 @@ No build step and no asset files: three.js loads from a CDN through an import ma
   - **Computer:** the fish follows the mouse, or use the arrow keys or WASD. Click or press Space to boost.
   - **Boost:** about half a second at 2.3× speed, the way you're steering. The button's ring then refills like a clock over 4 s, and it glows when it's ready (`BOOST` in `data.js`).
   - **Pause:** the top-right button, or Esc / P.
-- **Status:** the Sunny Reef is complete:
+- **Status:** two worlds are built, the Sunny Reef and, behind its portal, the Kelp Forest. The reef has:
   - **The sea:** 5 levels in a sea 3× wider than before, with rocks to corner fish against.
   - **Things to find:** oysters with pearls, power-up bubbles, and a shard hidden in a wreck on every level.
   - **The boss:** the Giant Moray, in level 5's wreck.
   - **The portal:** with all 5 shards it opens to another world's ocean.
   - **You:** a hexagon skill tree and four starters (Shark, Barracuda, Orca, Swordfish).
 
-  Next is the Kelp Forest, as the second world behind the portal. The full plan is in `GameDev/gulp-plan.md`.
+  **The Kelp Forest** (world 2) has its own 5 levels and a 27-species size ladder. Kelp sways behind the play area. Jellyfish sting, and you can never eat them. The boss is the Leopard Shark, which charges across the screen. Next: the Open Sea as world 3. The full plan is in `GameDev/gulp-plan.md`.
 
 ## How it plays
 
@@ -44,7 +44,7 @@ No build step and no asset files: three.js loads from a CDN through an import ma
   - **Bubble Shield:** you survive the next bite.
 - **Shards and the portal:**
   - **Finding them:** each level hides a shard in a wreck, out in the wide sea (a different place each run). It glints once you're close.
-  - **With all five:** they make an orb, and beating the world's apex opens a **portal** to another world's ocean (for now: the reef again, recoloured and faster).
+  - **With all five:** they make an orb, and beating the world's apex opens a **portal** to another world's ocean (the reef's portal leads to the Kelp Forest; after the last built world they loop round, recoloured and faster).
   - **Keeping skills:** at the portal you keep 1 skill, plus 1 per 10 pearls found in that world (up to 3). Your size, tree and shards start over.
   - **Missing shards:** the portal stays dark and the world replays, faster, keeping the shards you found.
 - **Combos:** eats less than 1.5 s apart multiply the points (up to ×8).
@@ -75,6 +75,26 @@ No build step and no asset files: three.js loads from a CDN through an import ma
   | 10-11 | whale sharks, sawfish, bull sharks, oarfish |
 
   Every level has at least one hunter bigger than you. A red "!" means one is chasing you; it gives up after a few seconds.
+- **The Kelp Forest (world 2):** 5 levels, each with its own landmark:
+  1. Kelp Edge: boulders and sand ripples.
+  2. Garibaldi Rocks: giant boulders with sea stars.
+  3. The Canopy: kelp mats under the surface.
+  4. Urchin Barren: purple urchins everywhere.
+  5. The Deep Stand: ancient thick kelp trunks.
+
+  The kelp itself sways in the vertex shader, so a whole forest is one draw call. Its fish, smallest first:
+
+  | Ranks | Species |
+  |---|---|
+  | 0-1 | anchovies, kelp blennies, señoritas, surfperch, moon jellies |
+  | 2-3 | garibaldi, kelp bass (hunter), blue rockfish, opaleye |
+  | 4-5 | sheephead, cabezon (hunter), halfmoon, lingcod (hunter), sea nettles |
+  | 6-7 | horn sharks (hunter), bat rays, giant sea bass (hunter), yellowtail |
+  | 8-9 | wolf eels (hunter), bonito, soupfin sharks (hunter), bluefin tuna, lion's mane jellies |
+  | 10-11 | sevengill sharks (hunter), opah, thresher sharks (hunter), basking sharks |
+
+  - **Jellyfish** (`behavior: 'jelly'`) drift in slow pulses. They can't be eaten at any size, and touching one stings: a 1 s stun and a shove (`JELLY` in `data.js`; Tough Skin halves it). They get their own pink chip on the food chain bar.
+  - **The Leopard Shark** is a chasing apex like the old Barracuda (circle, lunge, and a flurry in phase 2), plus a **charge**: it swims off the side of the screen, a "!" shows at the edge, then it charges straight across at your height.
 - **Rare variants (8%):**
 
   | Variant | Effect |

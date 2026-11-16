@@ -40,7 +40,7 @@ check('fish get faster each level', speedAt(1) === 1 && speedAt(3) > speedAt(2))
 
 // ---------- Zones, levels and the size ladder ----------
 for (const z of ZONES) {
-  const top = RANKS_PER_LEVEL * (LEVELS_PER_ZONE - 1) + 3, ranks = new Set(z.fish.filter(f => f.behavior !== 'puff').map(f => f.rank));
+  const top = RANKS_PER_LEVEL * (LEVELS_PER_ZONE - 1) + 3, ranks = new Set(z.fish.filter(f => !['puff', 'jelly'].includes(f.behavior)).map(f => f.rank));
   const missing = [...Array(top + 1).keys()].filter(r => !ranks.has(r));
   check(`${z.name}: has a species at every rank 0-${top}`, !missing.length, missing.join());
   check(`${z.name}: species keys are unique`, new Set(z.fish.map(f => f.key)).size === z.fish.length);
@@ -49,7 +49,7 @@ for (const z of ZONES) {
   const keys = new Set(z.fish.map(f => f.key)), bad = z.levels.flatMap(l => Object.keys(l.mix ?? {}).filter(k => !keys.has(k)));
   check(`${z.name}: level fish mixes only name the zone's fish`, !bad.length, bad.join());
   for (let i = 0; i < LEVELS_PER_ZONE; i++) {
-    const fish = levelFish(z, i), at = t => fish.filter(f => f.tier === t && f.behavior !== 'puff');
+    const fish = levelFish(z, i), at = t => fish.filter(f => f.tier === t && !['puff', 'jelly'].includes(f.behavior));
     check(`${z.name} level ${i + 1}: food to start on, your size, and bigger fish including a hunter`, at(0).length && at(1).length && at(2).length && at(3).length
       && fish.some(f => f.tier >= 2 && f.behavior === 'hunter') && fish.every(f => f.tier >= -1 && f.tier <= 3), fish.map(f => `${f.key}:${f.tier}`).join(' '));
     if (i === 0) continue;
@@ -69,6 +69,15 @@ check('without the portal, the next lap is the same world; through it, the next 
   check('you keep 1 skill through a portal, more with pearls, up to 3', keepCount(0) === 1 && keepCount(9) === 1 && keepCount(10) === 2 && keepCount(20) === 3 && keepCount(99) === 3);
 }
 
+check('species keys are unique across every zone (each has its own model)', new Set(ZONES.flatMap(z => z.fish.map(f => f.key))).size === ZONES.reduce((n, z) => n + z.fish.length, 0));
+{
+  const kelp = ZONES.find(z => z.key === 'kelp');
+  check('the Kelp Forest is world 2, behind the portal', kelp && levelInfo(6, 1).zone === kelp && levelInfo(1, 0).zone === ZONES[0]);
+  check('the Kelp Forest has jellyfish in every level, never as food', kelp && [0, 1, 2, 3, 4].every(i => levelFish(kelp, i).some(f => f.behavior === 'jelly'))
+    && [1, 2, 3].every(t => { const s = makeSpawner(4, kelp, kelp.levels[0], 0); return Array.from({ length: 2000 }, () => s.next(t)).every(x => x.species.behavior !== 'jelly' || !x.variant); }));
+  check('every level of every zone has swaying kelp or not, as it says', ZONES.every(z => z.levels.every(l => l.kelp === undefined || l.kelp >= 0)));
+}
+
 // ---------- Spawner ----------
 const reef = ZONES[0];
 const run = seed => { const s = makeSpawner(seed, reef, reef.levels[0]); return Array.from({ length: 300 }, (_, i) => s.next(1 + (i % 3))); };
@@ -78,7 +87,7 @@ check('the same seed gives the same spawns (and variants)', sig(a) === sig(b));
 check('a different seed gives different spawns', sig(a) !== sig(c));
 for (const tier of [1, 2, 3]) {
   const s = makeSpawner(1, reef), list = Array.from({ length: 3000 }, () => s.next(tier)), want = tier <= 1 ? TUNING.edibleSmall : TUNING.edibleShare;
-  const share = list.filter(x => x.species.tier < tier && x.species.behavior !== 'puff').length / list.length;
+  const share = list.filter(x => x.species.tier < tier && !['puff', 'jelly'].includes(x.species.behavior)).length / list.length;
   check(`at tier ${tier}, about ${Math.round(want * 100)}% of spawns are food`, Math.abs(share - want) < 0.05, share.toFixed(2));
 }
 {
@@ -125,8 +134,9 @@ check('schools come in groups', a.filter(x => x.species.group && !x.variant).eve
   check('the sea is at least 3× wider than it was (2200 half-width)', WORLD.x >= 6600);
   const rocks = [{ x: 0, y: 0, r: 100 }, { x: 150, y: 0, r: 60 }];
   let worst = Infinity;
-  for (let i = 0; i < 2000; i++) { // drop things all over the rocks: none may stay inside one
-    const e = { x: Math.random() * 500 - 250, y: Math.random() * 400 - 200, vx: 0, vy: 0 }, r = 20;
+  const rnd = vm.runInThisContext('mulberry32')(42);
+  for (let i = 0; i < 5000; i++) { // drop things all over the rocks: none may stay inside one
+    const e = { x: rnd() * 500 - 250, y: rnd() * 400 - 200, vx: 0, vy: 0 }, r = 20;
     pushOut(e, r, rocks);
     worst = Math.min(worst, ...rocks.map(c => Math.hypot(e.x - c.x, e.y - c.y) - (c.r + r)));
   }
