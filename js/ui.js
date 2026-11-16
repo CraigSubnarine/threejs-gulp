@@ -282,9 +282,92 @@ function resumeGame() {
   showScreen(null);
   document.activeElement?.blur();
 }
+// Settings, the leaderboard and the name screen go back to wherever they were opened from.
+function setBack() { app.settingsFrom = app.state === 'paused' ? 'pause' : app.state === 'over' ? 'over' : 'main'; }
 function openSettings() {
-  app.settingsFrom = app.state === 'paused' ? 'pause' : app.state === 'over' ? 'over' : 'main';
+  setBack();
   showScreen('settings');
+}
+
+// ---------- Account and leaderboard (js/arcade.js: Google sign-in through the Arcade's shared Supabase) ----------
+// Signing in is optional. It posts scores to the leaderboard and keeps your best and unlocked fish in a cloud save.
+const account = createArcade('threejs-gulp', updateAccount);
+let syncedFor = null; // the player whose cloud save has been merged in this visit
+updateAccount(); // signed out until Supabase says otherwise (a moment after load, if you have a session)
+function updateAccount() {
+  const inn = !!account.user;
+  for (const el of document.querySelectorAll('.signin')) el.hidden = inn || !account.online;
+  for (const el of document.querySelectorAll('.acct')) el.hidden = !inn;
+  for (const el of document.querySelectorAll('.acctName')) el.textContent = account.name ?? ''; // player input: text only
+  if (inn && syncedFor !== account.user.id) { syncedFor = account.user.id; syncSave(); }
+}
+// Merges this device's best and unlocks with the cloud save (the higher of each), and posts the best score if this
+// device hasn't posted it yet (e.g. you played as a guest, then signed in).
+async function syncSave() {
+  const merged = await account.sync({ best, progress }, (here, cloud) => ({
+    best: (cloud.best?.score ?? 0) > here.best.score ? cloud.best : here.best,
+    progress: mergeMax(here.progress, cloud.progress),
+  }));
+  best = merged.best;
+  Object.assign(progress, merged.progress);
+  store.set('gulp-best', best);
+  store.set('gulp-progress', progress);
+  if (best.score > store.get('gulp-posted', 0)) {
+    store.set('gulp-posted', best.score);
+    account.post(best.score);
+  }
+  if (app.state === 'menu') updateMain();
+}
+async function signIn() {
+  const msg = document.querySelector('.acctMsg');
+  msg.hidden = true;
+  if (!(await account.signIn())) { msg.textContent = "Can't reach sign-in right now. Check your connection."; msg.hidden = false; }
+}
+// The top 10 (each player's best), and where you stand if you're further down.
+async function openBoard() {
+  setBack();
+  showScreen('board');
+  $('boardList').replaceChildren();
+  $('boardYou').textContent = 'Loading...';
+  const [rows, me] = await Promise.all([account.top(), account.standing()]);
+  if ($('board').hidden) return;
+  if (!rows) { $('boardYou').textContent = "Couldn't load the leaderboard. Check your connection."; return; }
+  $('boardList').replaceChildren(...rows.map((r, i) => {
+    const li = document.createElement('li');
+    if (r.me) li.className = 'me';
+    for (const [cls, text] of [['r', i + 1], ['n', r.name], ['s', r.score.toLocaleString()]]) {
+      const span = document.createElement('span');
+      span.className = cls;
+      span.textContent = text; // names are player input: never innerHTML
+      li.append(span);
+    }
+    return li;
+  }));
+  $('boardYou').textContent = !rows.length ? 'No scores yet. Be the first!'
+    : me && !rows.some(r => r.me) ? `You: #${me.rank} of ${me.of} · ${me.score.toLocaleString()}` : '';
+}
+function openName() {
+  setBack();
+  showScreen('nameScreen');
+  $('nameInput').value = account.name ?? '';
+  $('nameErr').textContent = '';
+  $('nameInput').focus({ preventScroll: true });
+}
+async function saveName() {
+  const err = await account.rename($('nameInput').value);
+  if (err) $('nameErr').textContent = err;
+  else showScreen(app.settingsFrom);
+}
+$('nameInput').addEventListener('keydown', e => { if (e.key === 'Enter') saveName(); });
+// After a run: post the score if you're signed in, then show where you stand.
+async function postRun(score) {
+  $('overRank').textContent = 'Posting your score...';
+  if (score > store.get('gulp-posted', 0)) store.set('gulp-posted', score);
+  const posted = await account.post(score);
+  syncSave();
+  const me = posted ? await account.standing() : null;
+  if (app.state !== 'over') return;
+  $('overRank').textContent = me ? `Leaderboard: #${me.rank} of ${me.of} players` : posted ? '' : "Offline: your score will post next time you're connected.";
 }
 // Called by the game when you get eaten.
 function runOver({ score, level, eatenBy, world = 1, shards = 0 }) {
@@ -301,7 +384,9 @@ function runOver({ score, level, eatenBy, world = 1, shards = 0 }) {
   $('overBest').textContent = isBest ? 'New best!' : `Best: ${best.score.toLocaleString()}`;
   const fresh = CLASSES.filter(c => unlockedClasses().includes(c.key) && !before.includes(c.key)).map(c => c.name);
   $('overUnlock').textContent = fresh.length ? `New fish unlocked: ${fresh.join(', ')}! Pick it on the main menu.` : '';
+  $('overRank').textContent = '';
   showScreen('over');
+  if (account.user) postRun(score);
 }
 
 $('ui').addEventListener('click', e => {
@@ -321,6 +406,11 @@ $('ui').addEventListener('click', e => {
   else if (action === 'resume') resumeGame();
   else if (action === 'menu') toMenu();
   else if (action === 'settings') openSettings();
+  else if (action === 'board') openBoard();
+  else if (action === 'signin') signIn();
+  else if (action === 'signout') account.signOut();
+  else if (action === 'rename') openName();
+  else if (action === 'saveName') saveName();
   else if (action === 'back') showScreen(app.settingsFrom);
 });
 $('pauseBtn').addEventListener('click', pauseGame);

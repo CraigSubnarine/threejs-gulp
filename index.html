@@ -38,6 +38,18 @@
   .row select { font: inherit; font-weight: 800; min-height: 36px; padding: 0 8px; border-radius: 10px; border: 2px solid var(--line); background: #fff; color: var(--text); }
   .hint { font-size: .9rem; text-align: left; }
   .big { font-size: 1.4rem; color: var(--text) !important; font-weight: 800; }
+  /* Account and leaderboard (js/arcade.js). */
+  .screen [hidden] { display: none !important; }
+  .pair { display: flex; gap: 8px; }
+  .pair button { flex: 1; }
+  .screen p.acct b { color: var(--text); }
+  .screen input[type=text] { font: inherit; font-weight: 800; font-size: 1.1rem; min-height: 48px; padding: 0 14px; border: 3px solid var(--line); border-radius: 14px; color: var(--text); background: #fff; user-select: text; -webkit-user-select: text; touch-action: manipulation; }
+  .screen input[type=text]:focus-visible { outline: 3px solid var(--good); outline-offset: 2px; }
+  #boardList { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+  #boardList li { display: flex; align-items: center; gap: 10px; min-height: 38px; padding: 0 12px; border-radius: 10px; background: var(--btn); font-weight: 800; text-align: left; }
+  #boardList li.me { background: #ffe6d6; box-shadow: inset 0 0 0 2px var(--orange); }
+  #boardList .r { width: 1.8em; color: var(--muted); }
+  #boardList .n { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* HUD: score and zone on top, then the food chain bar (what you can eat) and your growth meter. */
   #hud { position: fixed; z-index: 1; top: 0; left: 0; right: 0; padding: max(8px, env(safe-area-inset-top)) 68px 0 max(12px, env(safe-area-inset-left)); pointer-events: none; color: #fff; text-shadow: 0 2px 0 rgb(0 30 50 / .5); }
@@ -217,8 +229,31 @@
     <div id="classes"></div>
     <p class="hint" id="classInfo"></p>
     <button class="primary" data-action="play">Play</button>
-    <button data-action="settings">Settings</button>
+    <div class="pair"><button data-action="board">Leaderboard</button><button data-action="settings">Settings</button></div>
+    <button class="signin" data-action="signin" hidden>Sign in with Google</button>
+    <p class="hint signin" hidden>Sign in to post your scores and keep your fish unlocked on any device.</p>
+    <p class="acct" hidden>Playing as <b class="acctName"></b></p>
+    <div class="pair acct" hidden><button data-action="rename">Change name</button><button data-action="signout">Sign out</button></div>
+    <p class="hint acctMsg" hidden></p>
     <a href="../">&larr; Back to Arcade</a>
+  </section>
+
+  <section class="screen" id="board" hidden>
+    <h2>LEADERBOARD</h2>
+    <p>Each player's best run.</p>
+    <ol id="boardList"></ol>
+    <p class="big" id="boardYou"></p>
+    <button class="signin" data-action="signin" hidden>Sign in with Google to join</button>
+    <button class="primary" data-action="back">Back</button>
+  </section>
+
+  <section class="screen" id="nameScreen" hidden>
+    <h2>PLAYER NAME</h2>
+    <p>Other players see this on the leaderboard.</p>
+    <input type="text" id="nameInput" maxlength="20" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Player name">
+    <p class="hint" id="nameErr"></p>
+    <button class="primary" data-action="saveName">Save</button>
+    <button data-action="back">Cancel</button>
   </section>
 
   <section class="screen" id="settings" hidden>
@@ -269,15 +304,19 @@
     <p class="big" id="overScore"></p>
     <p id="overBest"></p>
     <p class="big" id="overUnlock"></p>
+    <p id="overRank"></p>
     <button class="primary" data-action="play">Play again</button>
-    <button data-action="menu">Main menu</button>
+    <button class="signin" data-action="signin" hidden>Sign in to post your best</button>
+    <div class="pair"><button data-action="board">Leaderboard</button><button data-action="menu">Main menu</button></div>
   </section>
 </div>
 <button class="fixed" id="pauseBtn" aria-label="Pause" hidden>&#10074;&#10074;</button>
 <button class="fixed ready" id="boostBtn" aria-label="Boost" hidden><span><b>&raquo;</b>BOOST</span></button>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
 <script src="js/data.js"></script>
 <script src="js/rules.js"></script>
+<script src="js/arcade.js"></script>
 <script src="js/ui.js"></script>
 <script type="module" src="js/game.js"></script>
 </body>

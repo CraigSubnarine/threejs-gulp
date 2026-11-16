@@ -128,7 +128,8 @@ No build step and no asset files: three.js loads from a CDN through an import ma
 - Seeded spawns: each run has a seed, and the same seed gives the same sea and rare fish (ready for a Daily Dive and leaderboards).
 - Build variety: 4 starters × a branching skill tree you can only partly fill, reset at each portal except the skills you keep.
 - Exploration: shards in wrecks, pearls in oysters, power-ups, and a different wreck spot every run.
-- Next: the Kelp Forest and deeper worlds behind the portal, endless mode and the Daily Dive. Later: Supabase leaderboards.
+- Leaderboard and accounts (2026-11-16): optional Google sign-in through the Arcade's shared backend (`js/arcade.js`). Signed in, every run posts its score, the game over screen shows your rank, and the main menu shows your player name (Change name / Sign out). Your best score and unlocked fish are kept in a cloud save, merged with whatever this device has. Guests play as before, and their best posts the first time they sign in.
+- Next: the Open Sea and deeper worlds behind the portal, endless mode and the Daily Dive (a second board, `mode: 'daily-<date>'`).
 
 ## Code layout
 
@@ -137,6 +138,7 @@ No build step and no asset files: three.js loads from a CDN through an import ma
 - `js/rules.js`: who eats whom, growth, score and the seeded spawner. Plain JS, tested in Node.
 - `js/art.js`: fish, coral, rocks, light rays and bubbles, all built from three.js shapes.
 - `js/ui.js`: saves, sound, menus and input (the floating joystick, mouse, keys).
+- `js/arcade.js`: Google sign-in, leaderboards and cloud saves through the Arcade's shared Supabase backend. The same file goes in every game (see `GameDev/CLAUDE.md`).
 - `js/game.js`: the scene, camera, game loop, player, fish behaviour, collisions and HUD.
 
 ## Testing

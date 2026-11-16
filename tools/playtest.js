@@ -825,6 +825,69 @@ async function run(browser, name, options) {
   await ctx.close();
 }
 
+// Sign-in and the leaderboard (js/arcade.js). As a guest it reads the real, shared leaderboard; a real Google sign-in
+// can't run headless, so the signed-in checks stand in a fake account and check what the menus do with it.
+async function accountChecks(browser) {
+  const ctx = await browser.newContext({ viewport: { width: 375, height: 812 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+  const page = await ctx.newPage(), errors = [];
+  page.on('pageerror', e => errors.push(e.message));
+  await page.goto(url);
+  await page.waitForFunction(() => !!window.game, null, { timeout: 20000 });
+  await page.evaluate(installHarness);
+  const shown = sel => page.evaluate(q => [...document.querySelectorAll(q)].filter(e => !e.hidden && e.offsetParent).length, sel);
+  check('account: a guest sees Sign in with Google on the main menu', (await shown('#main button.signin')) === 1 && (await shown('#main .acct')) === 0);
+  await page.tap('#main [data-action=board]');
+  await page.waitForFunction(() => document.getElementById('boardYou').textContent !== 'Loading...', null, { timeout: 15000 });
+  const guestBoard = await page.evaluate(() => ({ you: document.getElementById('boardYou').textContent, rows: document.querySelectorAll('#boardList li').length, join: !document.querySelector('#board .signin').hidden }));
+  check('account: the leaderboard loads from the shared backend for a guest, with a sign-in button', !guestBoard.you.startsWith("Couldn't") && guestBoard.join, JSON.stringify(guestBoard));
+  await page.screenshot({ path: path.join(out, 'account-01-board-guest.png'), timeout: 45000 }).catch(() => {});
+  await page.tap('#board [data-action=back]');
+  check('account: Back from the leaderboard returns to the main menu', await visible(page, 'main'));
+  await page.evaluate(() => runOver({ score: 1234, level: 2, eatenBy: 'Grouper' }));
+  check("account: a guest's game over offers sign-in to post the best", (await shown('#over button.signin')) === 1);
+  await page.evaluate(() => toMenu());
+
+  // A fake signed-in player.
+  await page.evaluate(() => {
+    window.__posted = [];
+    Object.assign(account, {
+      user: { id: 'me' }, name: 'Reef Boss',
+      post: async (score, mode) => { __posted.push(score); return true; },
+      standing: async () => ({ rank: 3, of: 12, score: 4200 }),
+      top: async () => [{ name: '<img src=x onerror=alert(1)>', score: 9000, me: false }, { name: 'Reef Boss', score: 4200, me: true }],
+      sync: async data => data,
+    });
+    updateAccount();
+  });
+  const signedIn = await page.evaluate(() => ({ name: document.querySelector('#main .acctName').textContent, signin: [...document.querySelectorAll('#main .signin')].every(e => e.hidden) }));
+  check('account: signed in, the main menu says who you are and hides Sign in', signedIn.name === 'Reef Boss' && signedIn.signin, JSON.stringify(signedIn));
+  await page.screenshot({ path: path.join(out, 'account-02-menu-signed-in.png'), timeout: 45000 }).catch(() => {});
+  await page.tap('#main [data-action=board]');
+  await page.waitForFunction(() => document.querySelectorAll('#boardList li').length === 2, null, { timeout: 5000 });
+  const board = await page.evaluate(() => ({ me: document.querySelector('#boardList li.me .n')?.textContent, injected: !!document.querySelector('#boardList img'), first: document.querySelector('#boardList li .n').textContent }));
+  check('account: the board highlights you, and names show as plain text (no HTML gets in)', board.me === 'Reef Boss' && !board.injected && board.first.startsWith('<img'), JSON.stringify(board));
+  await page.screenshot({ path: path.join(out, 'account-03-board.png'), timeout: 45000 }).catch(() => {});
+  await page.tap('#board [data-action=back]');
+  await page.tap('#main [data-action=rename]');
+  check('account: Change name opens with your name filled in', await page.evaluate(() => !document.getElementById('nameScreen').hidden && document.getElementById('nameInput').value === 'Reef Boss'));
+  await page.fill('#nameInput', 'ab');
+  await page.tap('#nameScreen [data-action=saveName]');
+  check('account: a name that breaks the rules gets a message, not a save', (await page.evaluate(() => document.getElementById('nameErr').textContent)).includes('3-20'));
+  await page.tap('#nameScreen [data-action=back]');
+  check('account: Cancel goes back to the main menu', await visible(page, 'main'));
+  await page.evaluate(() => { store.set('gulp-posted', 0); runOver({ score: 4200, level: 3, eatenBy: 'Grouper' }); });
+  await page.waitForFunction(() => document.getElementById('overRank').textContent.startsWith('Leaderboard'), null, { timeout: 5000 }).catch(() => {});
+  const over = await page.evaluate(() => ({ rank: document.getElementById('overRank').textContent, posted: __posted, signin: document.querySelector('#over .signin').hidden }));
+  check('account: game over posts the score once and shows your rank', over.rank === 'Leaderboard: #3 of 12 players' && over.posted.filter(s => s === 4200).length === 1 && over.signin, JSON.stringify(over));
+  await page.screenshot({ path: path.join(out, 'account-04-over.png'), timeout: 45000 }).catch(() => {});
+  await page.evaluate(() => toMenu());
+  await page.tap('#main [data-action=signout]');
+  await page.waitForFunction(() => !document.querySelector('#main button.signin').hidden, null, { timeout: 5000 }).catch(() => {});
+  check('account: Sign out shows Sign in again', (await shown('#main button.signin')) === 1 && (await shown('#main .acct')) === 0);
+  check('account: no page errors', !errors.length, errors.slice(0, 3).join(' | '));
+  await ctx.close();
+}
+
 // A phone held sideways: the sea fills the screen, and the HUD leaves room to play.
 async function landscape(browser) {
   const ctx = await browser.newContext({ viewport: { width: 812, height: 375 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
@@ -858,6 +921,7 @@ async function landscape(browser) {
     await run(browser, 'phone', { viewport: { width: 375, height: 812 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
     await run(browser, 'desktop', { viewport: { width: 1280, height: 800 } });
     await landscape(browser);
+    await accountChecks(browser);
   } finally {
     await browser.close();
     server.close();
