@@ -316,7 +316,11 @@ const PVP = {
   stateHz: 20, snapHz: 12,
   modes: { lfs: 'Last Fish Standing', points: 'Most Points' },
   times: [0, 180, 300, 600],          // seconds; 0 = no time limit
-  targets: [10000, 25000, 50000],     // Most Points with no time limit: first to this score
+  targets: [10000, 15000],            // Most Points with no time limit: first to this score
+  // Tail bites: a fish your size or bigger can be bitten on its tail (the back of its body, like an apex): it loses
+  // take meter and you gain it (x small if you're the smaller one), plus points x its size. again: seconds before the
+  // same fish can bite the same tail again.
+  nip: { take: 5, small: 1.6, points: 150, again: 0.7 },
   seas: ['reef', 'kelp'],
   botNames: ['Bubbles', 'Finn', 'Coral', 'Nemo-ish', 'Gill', 'Snapper', 'Kelpie', 'Murk'],
 };

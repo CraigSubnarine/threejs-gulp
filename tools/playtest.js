@@ -93,10 +93,14 @@ async function run(browser, name, options) {
   check(`${name}: main menu on load`, await visible(page, 'main'));
   check(`${name}: Back to Arcade link`, await page.evaluate(() => !!document.querySelector('#main a[href="../"]')));
   check(`${name}: fish swim behind the menu`, await page.evaluate(() => game.G.fish.length > 5));
+  await tap('#main [data-action=play]'); // Play first asks which fish
+  check(`${name}: Play opens the fish picker`, await visible(page, 'pick'));
   const picker = await page.evaluate(() => ({ n: document.querySelectorAll('#classes .cls').length, locked: document.querySelectorAll('#classes .locked').length, sel: document.querySelector('#classes .sel')?.dataset.cls }));
   check(`${name}: the picker shows 4 starters, 3 locked, the Shark picked`, picker.n === 4 && picker.locked === 3 && picker.sel === 'shark', JSON.stringify(picker));
   await tap('[data-cls=barracuda]');
   check(`${name}: a locked fish says how to unlock it`, (await page.evaluate(() => document.getElementById('classInfo').textContent)).includes('Reach level 3'));
+  await tap('#pick [data-action=menu]');
+  check(`${name}: Back returns to the main menu`, await visible(page, 'main'));
   await shot('01-menu');
 
   // ---------- Settings ----------
@@ -113,6 +117,7 @@ async function run(browser, name, options) {
 
   // ---------- A run starts ----------
   await tap('#main [data-action=play]');
+  await tap('#pick [data-action=go]');
   await page.evaluate(() => __step(30));
   const start = await page.evaluate(() => ({ state: app.state, hud: !document.getElementById('hud').hidden, chips: document.querySelectorAll('#chain .chip').length,
     tier: __P().tier, score: game.G.score, level: game.G.level, title: document.getElementById('bannerTitle').textContent, sub: document.getElementById('bannerSub').textContent }));
@@ -783,23 +788,26 @@ async function run(browser, name, options) {
   await tap('#pause [data-action=menu]');
   await page.evaluate(() => { Object.assign(progress, { bestLevel: 99, bestScore: 1e6, apexBeaten: true, portals: 1 }); store.set('gulp-progress', progress); updateMain(); });
   check(`${name}: reaching the goals unlocks every fish`, await page.evaluate(() => document.querySelectorAll('#classes .locked').length === 0));
-  await tap('[data-cls=barracuda]');
   await tap('#main [data-action=play]');
+  await tap('[data-cls=barracuda]');
+  await tap('#pick [data-action=go]');
   const cuda = await page.evaluate(() => ({ owned: game.G.owned, speed: game.G.stats.speed, cls: game.G.cls.key }));
   check(`${name}: a Barracuda run starts with Fast Fins and +20% speed`, cuda.cls === 'barracuda' && cuda.owned.includes('fastFins') && Math.abs(cuda.speed - 1.2 * 1.12) < 1e-9, JSON.stringify(cuda));
   await page.evaluate(() => __step(30));
   await shot('09-barracuda');
   await tap('#pauseBtn');
   await tap('#pause [data-action=menu]');
-  await tap('[data-cls=orca]');
   await tap('#main [data-action=play]');
+  await tap('[data-cls=orca]');
+  await tap('#pick [data-action=go]');
   check(`${name}: an Orca run starts with a shield`, await page.evaluate(() => game.G.cls.key === 'orca' && __P().shields === 1));
   await page.evaluate(() => __step(30));
   await shot('09-orca');
   await tap('#pauseBtn');
   await tap('#pause [data-action=menu]');
-  await tap('[data-cls=swordfish]');
   await tap('#main [data-action=play]');
+  await tap('[data-cls=swordfish]');
+  await tap('#pick [data-action=go]');
   const spear = await page.evaluate(() => {
     const P = __P();
     input.mouse = null; // menu clicks left the mouse somewhere: boost straight ahead
@@ -900,6 +908,7 @@ async function landscape(browser) {
   const menuFits = await page.evaluate(() => { const r = document.getElementById('main').getBoundingClientRect(); return r.height <= innerHeight; });
   check('landscape: the main menu fits (it scrolls if it has to)', menuFits);
   await page.tap('#main [data-action=play]');
+  await page.tap('#pick [data-action=go]');
   await page.evaluate(() => __step(150));
   const lay = await page.evaluate(() => {
     const c = document.getElementById('view').getBoundingClientRect(), hud = document.getElementById('meterRow').getBoundingClientRect(), b = document.getElementById('boostBtn').getBoundingClientRect();

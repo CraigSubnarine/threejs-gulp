@@ -187,6 +187,8 @@ function classUnlocked(cls, progress) {
 // ---------- PvP ----------
 // Your size from the meter: 1 to start, one more every PVP.perTier, up to PVP.tiers.
 const pvpTier = meter => Math.min(PVP.tiers, 1 + Math.floor(Math.max(0, meter) / PVP.perTier));
+// A tail bite on a player your size or bigger: how much size moves from them to you, and the points.
+const tailBite = (attackerTier, victimTier) => ({ take: PVP.nip.take, gain: PVP.nip.take * (attackerTier < victimTier ? PVP.nip.small : 1), points: PVP.nip.points * victimTier });
 // Points for eating another player: bigger fish are worth much more; the crowned leader is worth double.
 const eatPlayerPoints = (victimTier, leader = false) => PVP.eatPoints * victimTier * victimTier * (leader ? PVP.crown : 1);
 // Who's ahead. players: [{ id, out, tier, score, outAt }]. Most Points: the most points. Last Fish Standing: those

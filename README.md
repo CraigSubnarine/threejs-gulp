@@ -127,12 +127,13 @@ No build step and no asset files: three.js loads from a CDN through an import ma
 - **Rooms:** Play online, pick a name, then **Create a room** (you get a 5-letter code to share) or **Join** with a friend's code.
 - **The lobby:**
   - Everyone picks a fish; all four are open online, with PvP tuning.
-  - The host sets the **mode**, the **time limit** (off / 3 / 5 / 10 min), the score to win (Most Points with no time limit), the **sea** (Sunny Reef / Kelp Forest) and **Power-up rain**.
+  - The host sets the **mode**, the **time limit** (off / 3 / 5 / 10 min), the score to win (10,000 or 15,000, for Most Points with no time limit), the **sea** (Sunny Reef / Kelp Forest) and **Power-up rain**.
   - The host can **add bots** to fill seats, so you can try it alone. A match needs 2-8 fish.
 - **The match:** everyone starts small, spread out, after a 3-2-1 countdown, in one level of the chosen sea, with its rocks, arch doors, oysters and power-ups.
   - **Sizes 1-5:** grow by eating. Bigger players eat smaller ones; the same size just bumps.
   - **Eating a player** scores 300 × their size² (a size-4 fish is worth 4,800), plus a big meal.
   - **Crown bounty:** the leader wears a gold crown and is worth double.
+  - **Tail bites:** a player your size or bigger can be bitten on the tail (the back of its body, like an apex; its jaws are the front 40%). Each bite moves a quarter of a size from them to you (×1.6 if you're the smaller one) and scores 150 × their size. Head to head, you just bump.
 - **Last Fish Standing:** eaten means out, and you watch the others (tap to switch who). The last fish wins; with a time limit, the biggest survivor wins when time's up.
 - **Most Points:** eaten means back in 3 s at **the same size**, at a random spot away from bigger fish, keeping your points. The most points when time's up wins (or the first to the target, with no time limit).
 - **On screen:**

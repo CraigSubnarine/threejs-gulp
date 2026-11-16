@@ -252,10 +252,8 @@
 <div id="ui">
   <section class="screen" id="main">
     <h1>GULP!</h1>
-    <p>Eat smaller fish to grow. Steer clear of bigger ones. Fill your meter to clear a level, then grow into a bigger sea.</p>
+    <p>Eat smaller fish. Avoid bigger ones.</p>
     <p class="big" id="mainBest"></p>
-    <div id="classes"></div>
-    <p class="hint" id="classInfo"></p>
     <button class="primary" data-action="play">Play</button>
     <button data-action="online">Play online (up to 8)</button>
     <div class="pair"><button data-action="board">Leaderboard</button><button data-action="settings">Settings</button></div>
@@ -265,6 +263,14 @@
     <div class="pair acct" hidden><button data-action="rename">Change name</button><button data-action="signout">Sign out</button></div>
     <p class="hint acctMsg" hidden></p>
     <a href="../">&larr; Back to Arcade</a>
+  </section>
+
+  <section class="screen" id="pick" hidden>
+    <h2>CHOOSE YOUR FISH</h2>
+    <div id="classes"></div>
+    <p class="hint" id="classInfo"></p>
+    <button class="primary" data-action="go">Start</button>
+    <button data-action="menu">Back</button>
   </section>
 
   <section class="screen" id="online" hidden>
@@ -286,7 +292,7 @@
     <div id="lobbySettings">
       <label class="row">Mode <select id="pvpMode"><option value="points">Most Points</option><option value="lfs">Last Fish Standing</option></select></label>
       <label class="row">Time limit <select id="pvpTime"><option value="0">Off</option><option value="180">3 min</option><option value="300">5 min</option><option value="600">10 min</option></select></label>
-      <label class="row" id="pvpTargetRow">First to <select id="pvpTarget"><option value="10000">10,000</option><option value="25000">25,000</option><option value="50000">50,000</option></select></label>
+      <label class="row" id="pvpTargetRow">First to <select id="pvpTarget"><option value="10000">10,000</option><option value="15000">15,000</option></select></label>
       <label class="row">Sea <select id="pvpSea"><option value="reef">Sunny Reef</option><option value="kelp">Kelp Forest</option></select></label>
       <label class="row">Power-up rain <input type="checkbox" id="pvpRain"></label>
     </div>

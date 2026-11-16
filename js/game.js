@@ -495,6 +495,7 @@ function updateFish(f, dt) {
       if (Math.abs(ax) < reach && Math.abs(ay) < reach && ax * tx > 0 && Math.hypot(ax, ay) < reach) ty += (f.y >= c.y ? 1 : -1) * sp * 1.4;
     }
   }
+  if (f.climb > 0) { f.climb -= dt; ty = sp * 1.6; }
   if (f.variant === 'golden' && Math.random() < dt * 4) burst(f.x + (Math.random() - 0.5) * f.len * 0.6, f.y, 1, 25); // sparkle
   f.vx += (tx - f.vx) * Math.min(1, dt * rate);
   f.vy += (ty - f.vy) * Math.min(1, dt * rate);
@@ -503,7 +504,12 @@ function updateFish(f, dt) {
   const lim = WORLD.y - f.len * 0.3;
   if (Math.abs(f.y) > lim) { f.y = Math.sign(f.y) * lim; f.vy = 0; }
   if (pushOut(f, f.len * SHAPE_R[f.s.shape] * (1 + 0.7 * f.puff), G.circles) && rate < 5) { // a calm fish stuck on a rock turns back
-    if ((f.stuck += dt) > 0.4) { f.dir = -f.dir; f.stuck = 0; }
+    if ((f.stuck += dt) > 0.4) {
+      f.dir = -f.dir;
+      f.stuck = 0;
+      if (G.t - (f.flipAt ?? -9) < 2) f.climb = 1.2; // stuck both ways (wedged between rocks): swim up and out
+      f.flipAt = G.t;
+    }
   } else f.stuck = 0;
   pose(f, dt);
   if (stunned) f.obj.pitch.rotation.x = 1.3; // rolled on its side

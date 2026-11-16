@@ -148,6 +148,18 @@ function harness() {
     check('edge arrows point to bubbles and pearls off screen', Math.max(arrows, arrows2) >= 1, `${arrows}/${arrows2}`);
     await shot(pages.a, '01-match');
 
+    // ---------- Tail bites: the same size, from behind ----------
+    await pages.a.evaluate(() => { const P = __P(); game.G.meter = 12; P.tier = pvpTier(12); P.safe = 0; P.face = 1; P.vx = 40; P.vy = 0; });
+    await pages.host.evaluate(() => { game.G.meter = 12; __P().tier = pvpTier(12); __P().safe = 0; });
+    await run(12);
+    const m0 = { a: await pages.a.evaluate(() => game.G.meter), host: await pages.host.evaluate(() => game.G.meter) };
+    await pages.host.evaluate(id => { const P = __P(), e = __m().players.get(id); Object.assign(P, { x: e.x - e.len * 0.45, y: e.y, vx: 0, vy: 0 }); }, aId);
+    await run(8, 2);
+    const m1 = { a: await pages.a.evaluate(() => game.G.meter), host: await pages.host.evaluate(() => game.G.meter), pop: await pages.host.evaluate(() => [...document.querySelectorAll('.pop')].some(p => p.textContent.includes('TAIL BITE'))) };
+    check('a player your size bitten on the tail loses a little size, and the biter gains it', m1.a < m0.a && m1.host > m0.host && m1.pop, JSON.stringify({ m0, m1 }));
+    await pages.host.evaluate(() => { const P = __P(); P.x -= 1500; });
+    await run(12);
+
     // ---------- Players eating players ----------
     // The host grows big and swims onto Alpha (which first loses its shield): Alpha is eaten, the host scores.
     await pages.a.evaluate(() => { __P().shields = 0; });

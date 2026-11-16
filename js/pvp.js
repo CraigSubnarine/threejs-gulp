@@ -22,7 +22,7 @@ export function createPvp(api) {
   let room = null, lobby = null, M = null;
 
   // ---------- The lobby ----------
-  const defaults = () => ({ mode: 'points', time: 300, target: 25000, sea: 'reef', rain: false });
+  const defaults = () => ({ mode: 'points', time: 300, target: 10000, sea: 'reef', rain: false });
   function lobbyChanged() {
     if (!room?.isHost) return;
     room.send({ $: 'lobby', lobby });
@@ -378,6 +378,7 @@ export function createPvp(api) {
       fromHost(m) { // a guest hears from the host
         if (m.$ === 'w') return snapshot(m);
         if (m.$ === 'bite') return bitten(m.by);
+        if (m.$ === 'nip' || m.$ === 'nipped') return nipped(m);
         if (m.$ === 'ate') {
           addFeed(m.text);
           if (m.by === me.id) awarded(m);
@@ -426,10 +427,11 @@ export function createPvp(api) {
     function bites() {
       const l = list().filter(e => (e.id === me.id ? P.alive && !M.out : live(e)));
       for (const a of l) for (const b of l) {
-        if (a === b || a.tier <= b.tier || b.safe > 0 || (pending.get(b.id) ?? 0) > G.t) continue;
+        if (a === b || b.safe > 0 || (pending.get(b.id) ?? 0) > G.t) continue;
         if (b.id === me.id ? P.safe > 0 || !P.alive : !live(b)) continue;
         const A = a.id === me.id ? P : a, B = b.id === me.id ? P : b;
         const reach = (a.id === me.id ? G.stats.reach : (a.stats ?? computeStats(a.cls, [], true)).reach);
+        if (a.tier <= b.tier) { tailCheck(a, b, A, B, reach); continue; } // your size or bigger: only its tail
         const d = Math.hypot(A.x - B.x, A.y - B.y);
         if (d > A.len * SHAPE_R.oval * reach * 1.15 + B.len * 0.25) continue;
         pending.set(b.id, G.t + 0.8);
@@ -437,6 +439,45 @@ export function createPvp(api) {
         else if (b.bot) botBitten(b, a);
         else room.sendTo(b.id, { $: 'bite', by: a.id });
       }
+    }
+    // Tail bites, like on an apex: touching the back of a fish your size or bigger (its jaws are the front 40%) takes
+    // a little of its size for you. Head to head, nothing happens: you just bump.
+    const nips = new Map(); // "attacker>victim" -> time it can bite that tail again
+    function tailCheck(a, b, A, B, reach) {
+      const key = `${a.id}>${b.id}`;
+      if ((nips.get(key) ?? 0) > G.t || (a.id === me.id ? P.safe > 0 : a.safe > 0)) return;
+      const p = clamp(Math.atan2(B.vy ?? 0, Math.abs(B.vx ?? 0) + 20), -0.6, 0.6), face = B.face ?? 1;
+      if (apexContact(B.x, B.y, face * Math.cos(p), Math.sin(p), B.len, B.len * 0.14, A.x, A.y, A.len * SHAPE_R.oval * reach) !== 'tail') return;
+      nips.set(key, G.t + PVP.nip.again);
+      const n = tailBite(a.tier, b.tier);
+      for (const [who, msg] of [[b, { $: 'nipped', by: a.id, take: n.take }], [a, { $: 'nip', of: b.id, gain: n.gain, points: n.points }]]) {
+        if (who.id === me.id) nipped(msg); else if (who.bot) botNip(who, msg); else room.sendTo(who.id, msg);
+      }
+    }
+    // A tail bite landed: on me (I shrink a little), or by me (I grow a little and score).
+    function nipped(m) {
+      if (m.$ === 'nipped') {
+        G.meter = Math.max(0, G.meter - m.take);
+        const t = pvpTier(G.meter);
+        if (t < P.tier) { P.tier = t; api.banner('SMALLER!', `Bitten on the tail: size ${t}`, 1000); }
+        const by = players.get(m.by), nx = (P.x - (by?.x ?? P.x - 1)) || 1, ny = P.y - (by?.y ?? P.y), d = Math.hypot(nx, ny) || 1;
+        P.vx += nx / d * 300; P.vy += ny / d * 300;
+        api.popup('NIPPED!', P.x, P.y + P.len * 0.8, 'ouch');
+        buzz(40);
+      } else {
+        G.meter += m.gain;
+        G.score += m.points;
+        api.popup(`TAIL BITE! +${m.points}`, P.x, P.y + P.len, 'combo');
+        api.burst(P.x, P.y, 12, 160);
+        beep(260, 120, 0.06, 'square', 0.6);
+        buzz(30);
+        M.grown();
+      }
+    }
+    function botNip(e, m) {
+      if (m.$ === 'nipped') e.meter = Math.max(0, e.meter - m.take);
+      else { e.meter += m.gain; e.score += m.points; }
+      e.tier = pvpTier(e.meter);
     }
     // A bigger player caught me: a shield spits me out, otherwise I'm eaten.
     function bitten(byId) {

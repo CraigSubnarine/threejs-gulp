@@ -216,6 +216,9 @@ check('every starter\'s free skill is a real top-row skill', CLASSES.every(c => 
   const me = { id: 'm', tier: 2 }, big = [{ id: 'k', tier: 4, x: 0, y: 0 }, me], rnd = mulberry32(3), spots = Array.from({ length: 20 }, () => respawnSpot(big, me, rnd));
   check('respawn spots keep away from bigger fish', spots.every(s => Math.hypot(s.x, s.y) > 1500), Math.round(Math.min(...spots.map(s => Math.hypot(s.x, s.y)))));
   check('every starter has PvP tuning, and none is faster and bigger-biting at once', CLASSES.every(c => c.pvp?.mods && c.pvp.desc) && CLASSES.every(c => !((c.pvp.mods.speed ?? 1) > 1 && (c.pvp.mods.reach ?? 1) > 1)));
+  const tailBite = vm.runInThisContext('tailBite'), same = tailBite(2, 2), small = tailBite(1, 3);
+  check('a tail bite moves size from the bitten fish to the biter, more for a smaller biter, and scores by its size', same.take === PVP.nip.take && same.gain === same.take && small.gain > small.take && small.points === PVP.nip.points * 3);
+  check('Most Points targets are 10,000 and 15,000', PVP.targets.join() === '10000,15000');
   check('PvP stats use the PvP tuning', computeStats('barracuda', [], true).speed === 1.15 && computeStats('barracuda', []).speed === 1.2 && computeStats('orca', [], true).regrow === 40);
 }
 

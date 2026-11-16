@@ -488,7 +488,8 @@ $('ui').addEventListener('click', e => {
     drawTree();
   } else if (action === 'next') leaveTree();
   else if (action === 'dive') diveIn();
-  else if (action === 'play') startRun();
+  else if (action === 'play') { if (btn.closest('#main')) { buildClassPicker(); showScreen('pick'); } else startRun(); } // from the menu: choose your fish first; Play again: same fish
+  else if (action === 'go') startRun();
   else if (action === 'resume') resumeGame();
   else if (action === 'menu') toMenu();
   else if (action === 'online') openOnline();
