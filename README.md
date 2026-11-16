@@ -8,11 +8,18 @@ No build step and no asset files: three.js loads from a CDN through an import ma
 - **Repo:** https://github.com/CraigSubnarine/threejs-gulp
 - **Run locally:** the `gamedev` preview server at http://localhost:8765/threejs-gulp/ (or `node tools/server.js` from a script)
 - **Controls:**
-  - **Phone:** touch anywhere and drag, like a joystick. The further you drag, the faster you swim. Tap **BOOST** (bottom right) for a burst of speed.
+  - **Phone:** touch anywhere and drag, like a joystick. The further you drag, the faster you swim. Tap **BOOST** (bottom right) for a burst of speed. It plays upright or sideways (landscape fills the screen, with a slimmer HUD).
   - **Computer:** the fish follows the mouse, or use the arrow keys or WASD. Click or press Space to boost.
   - **Boost:** about half a second at 2.3× speed, the way you're steering. The button's ring then refills like a clock over 4 s, and it glows when it's ready (`BOOST` in `data.js`).
   - **Pause:** the top-right button, or Esc / P.
-- **Status:** Step 3 is live: the Sunny Reef's 5 levels end with its apex predator, the Barracuda. Step 2 brought keeping your size between levels, more fish and rare variants, the skill tree and unlockable classes. Next is the Kelp Forest. The full plan is in `GameDev/gulp-plan.md`.
+- **Status:** the Sunny Reef is complete:
+  - **The sea:** 5 levels in a sea 3× wider than before, with rocks to corner fish against.
+  - **Things to find:** oysters with pearls, power-up bubbles, and a shard hidden in a wreck on every level.
+  - **The boss:** the Giant Moray, in level 5's wreck.
+  - **The portal:** with all 5 shards it opens to another world's ocean.
+  - **You:** a hexagon skill tree and four starters (Shark, Barracuda, Orca, Swordfish).
+
+  Next is the Kelp Forest, as the second world behind the portal. The full plan is in `GameDev/gulp-plan.md`.
 
 ## How it plays
 
@@ -23,7 +30,23 @@ No build step and no asset files: three.js loads from a CDN through an import ma
   - When a level clears, the camera pulls back while you stay the same size. The fish you could eat at the end are still there in the next level and still food: the parrotfish you outgrew in level 1 are snacks in level 2. New bigger species join on top that you can't eat yet, and the tiniest drop out.
   - Under the hood, every level is built at the same scale. The game rescales everything by 200/70 behind the fade (one level = two ranks), so the numbers never blow up.
 - **Early growth is quick:** a tiny fish gives 1.75 growth, so about 12 bites to your first size-up. While you're at your smallest, 70% of what spawns is food.
-- **One life:** if a bigger fish catches you, the run is over, unless a skill saves you.
+- **One life:** if a bigger fish catches you, the run is over, unless a skill or a shield saves you.
+- **A wide sea:** about 7 screens across. Rock pillars and arches stand on the play plane: you and the fish can't swim through them, so a fleeing fish can be cornered against one (calm fish swim round them; panicking ones don't).
+- **Oysters** (2 per level) sit on the sea floor:
+  - **The cycle:** each one opens to show a pearl, shivers, then snaps shut.
+  - **Pearls:** a white pearl is worth 500 × the level and a black one 2,500 × the level.
+  - **The snap:** while you're small it eats you; bigger, it pinches.
+  - **Bonus points:** every 5 pearls give a bonus skill point.
+- **Power-ups** drift down in bubbles about every 20 s:
+  - **Shock:** fish near you go limp.
+  - **Shrink:** fish one size bigger than you become food for 6 s.
+  - **Rush:** you swim 50% faster.
+  - **Bubble Shield:** you survive the next bite.
+- **Shards and the portal:**
+  - **Finding them:** each level hides a shard in a wreck, out in the wide sea (a different place each run). It glints once you're close.
+  - **With all five:** they make an orb, and beating the world's apex opens a **portal** to another world's ocean (for now: the reef again, recoloured and faster).
+  - **Keeping skills:** at the portal you keep 1 skill, plus 1 per 10 pearls found in that world (up to 3). Your size, tree and shards start over.
+  - **Missing shards:** the portal stays dark and the world replays, faster, keeping the shards you found.
 - **Combos:** eats less than 1.5 s apart multiply the points (up to ×8).
 - **The Sunny Reef** has 5 levels, each its own spot with its own colours, prop mix, fish mix and a landmark built in code:
   1. Coral Garden
@@ -32,14 +55,14 @@ No build step and no asset files: three.js loads from a CDN through an import ma
   4. Arch Rocks
   5. The Drop-off
 
-  After level 5 comes the apex, then the reef starts over with faster fish, until the Kelp Forest is built.
-- **The apex predator (the Barracuda):** filling level 5's meter brings it in with a taunt and a health bar, while the other fish clear off.
-  - **Its tail is where you bite it.** Each bite takes 1 health, and boosting into it takes 2.
-  - **Its jaws** (the front 40% of its body) eat you, unless Spines or Second Wind saves you.
-  - **How it fights:** it circles you, then shakes with a red "!" and lunges at more than twice your speed. Right after a lunge it slows down: that's your chance.
-  - **Phase 2:** at half health it gets angry (a new taunt), moves faster and adds a flurry of three quick lunges.
+  After level 5 comes the apex, then the portal (or another lap of the reef, if you're missing shards).
+- **The apex predator (the Giant Moray):** filling level 5's meter wakes it in the level's wreck. An arrow points the way, and the other fish clear off.
+  - **Its tail is where you bite it.** Each bite takes 1 health, and boosting into it takes 2 (the boost button works during the fight; it used not to).
+  - **Its jaws** (the front 40% of its body) eat you, unless a shield or Second Wind saves you.
+  - **How it fights:** it hides in one of the wreck's three holes. That hole shakes and bubbles with a red "!", then it strikes out at you, stays stretched out for about 2 s (its tail still in the hole: bite it there), and pulls back in.
+  - **Phase 2:** at half health it gets angry, moves faster, and sometimes strikes from two holes in a row.
   - **Beating it** pays 3,000 × the level, plus a bonus skill point.
-  - It's data plus an attack library (`apex` in `data.js`, `APEX_ATTACKS`): each later zone's apex is a model, some numbers and a list of attacks per phase.
+  - It's data plus an attack library (`apex` in `data.js`, `APEX_ATTACKS`). Chasing apexes use `lunge`/`flurry`; lair apexes (`lair: true`) use `ambush`/`double`.
 - **The reef's fish (25 species, smallest first):**
 
   | Ranks | Species |
@@ -60,26 +83,31 @@ No build step and no asset files: three.js loads from a CDN through an import ma
   | Spiny | stings you for a moment, but gives ×2 growth |
   | Speedy | fast and jumpy, ×2 points |
   | Giant | one size bigger |
-- **Skill tree:** after each level you get 1 point.
-  - **Branches:** Fins (speed and boost), Jaws (reach, growth, combos, rare fish) and Scales (survival). Each has 5 nodes.
-  - **Cost:** node *n* costs *n* points and needs the node before it, so a full run can't buy everything (45 points vs about 25).
-  - **Capstones:** Torpedo (eat your own size while boosting), Gulp (swallow one size bigger once per level) and Second Wind (survive being eaten once).
-  - **Combos:** owning nodes in two branches unlocks a bonus, such as Feeding Frenzy, Ghost, Shark Skin or Hoarder.
-- **Classes**, picked on the main menu:
+- **Skill tree:** three dark panels, Scales (green, survive), Jaws (red, hunt) and Fins (yellow, speed). Each is a web of 10 glowing hexagons under its emblem. On a phone held upright the panels are tabs.
+  - **Unlocking:** a node opens once you own *any* node joined to it above, so paths split and join again. Cost goes by row (1, 1, 2, 3, 4).
+  - **Points:** 1 per level, 1 per 5 pearls and 1 per apex, about 10 a world. A branch costs about 23 and the tree about 70, so each world you pick a direction. Unspent points carry over.
+  - **Capstones:** Second Wind, Gulp, Torpedo.
+  - **New skills:**
+    - **Scales:** Ink Cloud, Oyster Proof, Mimic, Shell Up, Regrow.
+    - **Jaws:** Pearl Diver, Sharp Teeth, Magnet, Iron Jaw, Shard Sense.
+    - **Fins:** Slipstream, Double Dash, Wake, Ghost Fin, Jet Stream.
+  - **Combos:** owning a pair across two branches unlocks a bonus: Feeding Frenzy, Ghost, Shark Skin, Hoarder.
+- **Starters**, picked on the main menu (you're always a young one, tier 1):
 
-  | Class | What it's like | Unlock |
+  | Starter | What it's like | Unlock |
   |---|---|---|
-  | Scamp | all-rounder | open from the start |
-  | Dart | fast, with a small bite | reach level 3 |
-  | Puffy | survives a bite each level, but slower | clear the reef |
-  | Gobbler | big bite and growth, but a slow boost | 20,000 points in one run |
+  | Shark | all-rounder with a bigger bite | open from the start |
+  | Barracuda | fast, with a quick boost, but a small bite (starts with Fast Fins) | reach level 3 |
+  | Orca | survives a bite each level, but slower (starts with Camouflage) | beat the reef's apex |
+  | Swordfish | Spear: eats fish its own size while boosting; the fastest boost, but a slow recharge | open a portal |
 
 ## Replay and competition hooks
 
 - A score, always: points per fish × combo, plus a clear bonus per level. Your best score and level are saved.
 - Seeded spawns: each run has a seed, and the same seed gives the same sea and rare fish (ready for a Daily Dive and leaderboards).
-- Build variety: 4 classes × a skill tree you can only partly fill.
-- Next: apex predator bosses, then the Kelp Forest and deeper zones, endless mode and the Daily Dive. Later: Supabase leaderboards.
+- Build variety: 4 starters × a branching skill tree you can only partly fill, reset at each portal except the skills you keep.
+- Exploration: shards in wrecks, pearls in oysters, power-ups, and a different wreck spot every run.
+- Next: the Kelp Forest and deeper worlds behind the portal, endless mode and the Daily Dive. Later: Supabase leaderboards.
 
 ## Code layout
 
@@ -97,6 +125,11 @@ No build step and no asset files: three.js loads from a CDN through an import ma
   - the menus and settings
   - a real joystick drag, the mouse and the arrow keys
   - eating, combos and growing (with the camera pulling back)
+  - the wide sea, rocks (you can't pass them; a fleeing fish gets cornered), the surface
+  - oysters, pearls and skill points, the four power-ups
+  - wrecks and shards, the portal, the keep screen and the next world
+  - the hexagon skill tree (tabs on a phone), the four starters, the Moray's ambushes
+  - a short landscape run (812 × 375)
   - the puffer and the hunter
   - pause and auto-pause
   - getting eaten and the game over screen

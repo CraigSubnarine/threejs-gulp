@@ -90,8 +90,8 @@ async function run(browser, name, options) {
   check(`${name}: Back to Arcade link`, await page.evaluate(() => !!document.querySelector('#main a[href="../"]')));
   check(`${name}: fish swim behind the menu`, await page.evaluate(() => game.G.fish.length > 5));
   const picker = await page.evaluate(() => ({ n: document.querySelectorAll('#classes .cls').length, locked: document.querySelectorAll('#classes .locked').length, sel: document.querySelector('#classes .sel')?.dataset.cls }));
-  check(`${name}: the class picker shows 4 fish, 3 locked, Scamp picked`, picker.n === 4 && picker.locked === 3 && picker.sel === 'scamp', JSON.stringify(picker));
-  await tap('[data-cls=dart]');
+  check(`${name}: the picker shows 4 starters, 3 locked, the Shark picked`, picker.n === 4 && picker.locked === 3 && picker.sel === 'shark', JSON.stringify(picker));
+  await tap('[data-cls=barracuda]');
   check(`${name}: a locked fish says how to unlock it`, (await page.evaluate(() => document.getElementById('classInfo').textContent)).includes('Reach level 3'));
   await shot('01-menu');
 
@@ -453,16 +453,18 @@ async function run(browser, name, options) {
   const widened = await page.evaluate(() => ({ state: app.state, len: __P().len, screen: __onScreen() }));
   check(`${name}: you keep your size while the view widens, then the skill tree opens`, widened.state === 'tree' && Math.abs(widened.len - len0) < 1 && (await visible(page, 'tree')), JSON.stringify({ ...widened, len0 }));
   await shot('06-tree');
-  const tree = await page.evaluate(() => ({ points: game.G.points, open: document.querySelectorAll('.node.open').length, owned: document.querySelectorAll('.node.owned').length, text: document.getElementById('treePoints').textContent }));
-  check(`${name}: the tree offers the first node of each branch for 1 point`, tree.points === 1 && tree.open === 3 && tree.owned === 0 && tree.text.startsWith('1 skill point'), JSON.stringify(tree));
-  await tap('[data-node=fins2]');
+  const tree = await page.evaluate(() => ({ points: game.G.points, open: document.querySelectorAll('.hex.open').length, owned: document.querySelectorAll('.hex.owned').length, text: document.getElementById('treePoints').textContent }));
+  if (options.hasTouch) await tap('[data-tab=fins]'); // a phone shows one branch at a time
+  check(`${name}: the tree offers the top node of each branch for 1 point`, tree.points === 1 && tree.open === 3 && tree.owned === 0 && tree.text.startsWith('1 skill point'), JSON.stringify(tree));
+  await tap('[data-node=quickCharge]');
   check(`${name}: a later node says what it needs first`, await page.evaluate(() => document.getElementById('treeDetail').textContent.includes('Learn Fast Fins first') && document.getElementById('learnBtn').disabled));
-  await tap('[data-node=fins1]');
+  await tap('[data-node=fastFins]');
   await tap('#learnBtn');
-  const learned = await page.evaluate(() => ({ owned: game.G.owned, points: game.G.points, speed: game.G.stats.speed, cls: document.querySelector('[data-node=fins1]').className }));
-  check(`${name}: learning Fast Fins spends the point and speeds you up`, learned.owned.includes('fins1') && learned.points === 0 && Math.abs(learned.speed - 1.12) < 1e-9 && learned.cls.includes('owned'), JSON.stringify(learned));
-  await tap('[data-node=fins2]');
-  check(`${name}: with no points left, the next node can't be learned`, await page.evaluate(() => document.getElementById('learnBtn').disabled && document.getElementById('treeDetail').textContent.includes('Needs 2 points')));
+  const learned = await page.evaluate(() => ({ owned: game.G.owned, points: game.G.points, speed: game.G.stats.speed, cls: document.querySelector('[data-node=fastFins]').className }));
+  check(`${name}: learning Fast Fins spends the point and speeds you up`, learned.owned.includes('fastFins') && learned.points === 0 && Math.abs(learned.speed - 1.12) < 1e-9 && learned.cls.includes('owned'), JSON.stringify(learned));
+  await tap('[data-node=quickCharge]');
+  check(`${name}: with no points left, the next node can't be learned`, await page.evaluate(() => document.getElementById('learnBtn').disabled && document.getElementById('treeDetail').textContent.includes('Needs 1 point')));
+  await shot('06b-tree-learned');
   await tap('#treeNext');
   const after = await page.evaluate(() => { for (let i = 0; i < 60 && game.G.phase !== 'fadein'; i++) __step(1); return { phase: game.G.phase, level: game.G.level, tier: __P().tier, len: __P().len, meter: game.G.meter, screen: __onScreen(), spot: game.G.spot.name, landmark: game.G.spot.landmark, sub: document.getElementById('bannerSub').textContent }; });
   check(`${name}: Next level fades into level 2 at tier 1 with an empty meter`, after.phase === 'fadein' && after.level === 2 && after.tier === 1 && after.meter === 0, JSON.stringify(after));
@@ -489,7 +491,7 @@ async function run(browser, name, options) {
     await page.evaluate(() => __step(30));
     await shot(`08-level${lv}`);
   }
-  // ---------- The apex: the Barracuda at the end of reef level 5 ----------
+  // ---------- The apex: the Giant Moray, in level 5's wreck ----------
   const arrive = await page.evaluate(() => {
     for (let i = 0; i < 120 && game.G.phase !== 'swim'; i++) game.update(1 / 60);
     __P().safe = 1e6;
@@ -498,36 +500,50 @@ async function run(browser, name, options) {
     __step(1);
     __P().safe = 1e6; // the apex's arrival gives you 1.5 s; the test player stays safe while it fights
     const A = game.G.apex;
-    return { phase: game.G.phase, bar: !document.getElementById('boss').hidden, name: document.getElementById('bossName').textContent, hp: A?.hp, title: document.getElementById('bannerTitle').textContent, taunt: document.getElementById('bannerSub').textContent };
+    return { phase: game.G.phase, mode: A?.mode, bar: !document.getElementById('boss').hidden, name: document.getElementById('bossName').textContent, hp: A?.hp, title: document.getElementById('bannerTitle').textContent, arrow: !document.getElementById('shardArrow').hidden };
   });
-  check(`${name}: filling level 5's meter brings in the Barracuda with a taunt and a health bar`, arrive.phase === 'apex' && arrive.bar && arrive.name === 'The Barracuda' && arrive.hp === 6 && arrive.title === 'THE BARRACUDA' && arrive.taunt.length > 10, JSON.stringify(arrive));
-  await page.evaluate(() => { game.G.circles = []; __step(90); }); // the attack checks need open water (rocks stop a lunge)
+  check(`${name}: filling level 5's meter wakes the Giant Moray in the wreck: a health bar, and an arrow to its lair`, arrive.phase === 'apex' && arrive.mode === 'lurk' && arrive.bar && arrive.name === 'The Giant Moray' && arrive.hp === 6 && arrive.title === 'THE GIANT MORAY' && arrive.arrow, JSON.stringify(arrive));
+  const lair = await page.evaluate(() => {
+    const g = game.G, P = __P();
+    Object.assign(P, { x: g.wreck.x + 250, y: g.wreck.y + 650, vx: 0, vy: 0 });
+    __step(120);
+    return { mode: g.apex.mode, taunt: !!document.querySelector('.pop.taunt') };
+  });
+  check(`${name}: swimming to the wreck brings it out, with a taunt`, lair.mode !== 'lurk' && lair.taunt, JSON.stringify(lair));
   await shot('10-apex');
-  // Let it fight for a while (you can't be eaten here): it circles, shakes with a "!", lunges fast, then slows down.
+  // Let it fight for a while (you can't be eaten here): a hole shakes with a "!", it strikes out, stays out, pulls back in.
   const cycle = await page.evaluate(() => {
     const A = game.G.apex, seen = new Set();
-    let fast = 0, warned = false, shot = false;
+    let warned = false;
     for (let i = 0; i < 60 * 12; i++) {
       game.update(1 / 60);
       seen.add(A.mode);
       if (A.mode === 'tell') warned ||= A.warn.visible;
-      if (A.mode === 'lunge') fast = Math.max(fast, Math.hypot(A.vx, A.vy));
-      if (A.mode === 'tell' && !shot && A.t < 0.3) { shot = true; break; } // stop mid-shake for the screenshot
+      if (A.mode === 'tell' && A.t < 0.3) break; // stop mid-shake for the screenshot
     }
     game.render();
-    return { seen: [...seen], fast: fast / PLAYER.speed, warned, mode: A.mode };
+    return { seen: [...seen], warned, mode: A.mode, hidden: !A.obj.root.visible };
   });
-  check(`${name}: the Barracuda circles, then shakes with a red "!" before it attacks`, (cycle.seen.includes('circle') || cycle.seen.includes('enter')) && cycle.seen.includes('tell') && cycle.warned, JSON.stringify(cycle));
+  check(`${name}: it hides, then a hole shakes with a red "!" before it strikes`, cycle.mode === 'tell' && cycle.warned && cycle.hidden, JSON.stringify(cycle));
   await shot('11-apex-tell');
   const lunge = await page.evaluate(() => {
     const A = game.G.apex, seen = new Set();
     let fast = 0;
-    for (let i = 0; i < 60 * 12 && !(seen.has('lunge') && seen.has('recover')); i++) { game.update(1 / 60); seen.add(A.mode); if (A.mode === 'lunge') fast = Math.max(fast, Math.hypot(A.vx, A.vy)); }
-    return { seen: [...seen], fast: +(fast / PLAYER.speed).toFixed(2) };
+    for (let i = 0; i < 60 * 12 && !seen.has('exposed'); i++) { game.update(1 / 60); seen.add(A.mode); if (A.mode === 'lunge') fast = Math.max(fast, Math.hypot(A.vx, A.vy)); }
+    game.render();
+    return { seen: [...seen], fast: +(fast / PLAYER.speed).toFixed(2), shown: A.obj.root.visible };
   });
-  check(`${name}: it lunges at more than twice your speed, then slows down`, lunge.seen.includes('lunge') && lunge.seen.includes('recover') && lunge.fast > 2, JSON.stringify(lunge));
-  // Put the Barracuda still at the middle, facing right: its tail end is on the left, its jaws on the right.
-  const hold = () => page.evaluate(() => { const A = game.G.apex; Object.assign(A, { mode: 'recover', t: 9, x: 0, y: 0, vx: 0, vy: 0, face: 1, inv: 0 }); Object.assign(__P(), { vx: 0, vy: 0, boost: 0 }); });
+  check(`${name}: it strikes out at more than twice your speed and stays stretched out`, lunge.seen.includes('lunge') && lunge.seen.includes('exposed') && lunge.fast > 2 && lunge.shown, JSON.stringify(lunge));
+  await shot('11b-apex-out');
+  const back = await page.evaluate(() => {
+    const A = game.G.apex, seen = new Set();
+    for (let i = 0; i < 60 * 6 && !seen.has('hide'); i++) { game.update(1 / 60); seen.add(A.mode); }
+    return { seen: [...seen], hidden: !A.obj.root.visible };
+  });
+  check(`${name}: then it pulls back into the wreck`, back.seen.includes('retract') && back.seen.includes('hide') && back.hidden, JSON.stringify(back));
+  await page.evaluate(() => { game.G.circles = []; });
+  // Hold it stretched out at the middle, facing right: its tail end is on the left, its jaws on the right.
+  const hold = () => page.evaluate(() => { const A = game.G.apex; Object.assign(A, { mode: 'exposed', t: 9, x: 0, y: 0, hx: 1, hy: 0, face: 1, inv: 0, left: 0 }); Object.assign(__P(), { vx: 0, vy: 0, boost: 0 }); });
   await hold();
   const bite1 = await page.evaluate(() => { const A = game.G.apex, P = __P(); P.x = -A.len / 2 - 10; P.y = 0; game.update(1 / 60); return A.hp; });
   check(`${name}: biting its tail takes off 1`, bite1 === 5, String(bite1));
@@ -539,7 +555,7 @@ async function run(browser, name, options) {
   await hold();
   const jaws = await page.evaluate(() => { const A = game.G.apex, P = __P(); Object.assign(P, { x: A.len / 2 - 30, y: 0, safe: 0, shields: 1 }); game.update(1 / 60); const r = { alive: P.alive, shields: P.shields, hp: A.hp }; P.safe = 1e6; return r; });
   check(`${name}: its jaws would eat you (Spines spits you out)`, jaws.alive && jaws.shields === 0 && jaws.hp === 3, JSON.stringify(jaws));
-  check(`${name}: phase 2 adds the flurry`, await page.evaluate(() => game.G.apex.a.phases[game.G.apex.stage].includes('flurry')));
+  check(`${name}: phase 2 adds a double strike`, await page.evaluate(() => game.G.apex.a.phases[game.G.apex.stage].includes('double')));
   const pts0 = await page.evaluate(() => game.G.points);
   await hold();
   const down = await page.evaluate(() => {
@@ -552,20 +568,20 @@ async function run(browser, name, options) {
     game.render();
     return { ...r, state: app.state, apexGone: !game.G.apex };
   });
-  check(`${name}: the last bite defeats it: a big bonus, then the tree`, down.phase === 'apexdown' && down.title === 'BARRACUDA DEFEATED!' && down.bonus >= APEX_BONUS_L5 && down.bar && down.state === 'tree' && down.apexGone, JSON.stringify(down));
+  check(`${name}: the last bite defeats it: a big bonus, then the tree`, down.phase === 'apexdown' && down.title === 'MORAY DEFEATED!' && down.bonus >= APEX_BONUS_L5 && down.bar && down.state === 'tree' && down.apexGone, JSON.stringify(down));
   check(`${name}: beating the apex gives 2 skill points (bonus + level)`, (await page.evaluate(() => game.G.points)) === pts0 + 2);
   await tap('#treeNext');
   const loop = await page.evaluate(() => { for (let i = 0; i < 60 && game.G.phase !== 'fadein'; i++) __step(1); return { level: game.G.level, index: game.G.index, spot: game.G.spot.name, faster: speedAt(game.G.level) > speedAt(1), apex: !!game.G.apex }; });
-  check(`${name}: after the Barracuda the reef starts over, deeper and faster`, loop.level === 6 && loop.index === 0 && loop.faster && !loop.apex, JSON.stringify(loop));
+  check(`${name}: after the Moray the reef starts over, deeper and faster`, loop.level === 6 && loop.index === 0 && loop.faster && !loop.apex, JSON.stringify(loop));
   check(`${name}: without all 5 shards the portal stays dark: same world, and the shards you found are kept`, await page.evaluate(() => game.G.world === 0 && !game.G.portal && document.getElementById('bannerSub').textContent !== ''));
 
   // ---------- Skills at work: Spines spits out a bite ----------
   const spines = await page.evaluate(() => {
     const g = game.G;
     g.points = 10;
-    ['scales', 'scales', 'scales'].forEach((b, i) => game.buy(b, i));
+    ['camouflage', 'toughSkin', 'spines'].forEach(id => game.buy(id));
     __clearLevel();
-    return { owned: g.owned.filter(n => n.startsWith('scales')).length };
+    return { owned: g.owned.filter(n => ['camouflage', 'toughSkin', 'spines'].includes(n)).length };
   });
   await tap('#treeNext');
   const spit = await page.evaluate(() => {
@@ -597,7 +613,7 @@ async function run(browser, name, options) {
     __step(1);
     const A = game.G.apex;
     if (!A) return { apex: false, index: game.G.index };
-    Object.assign(A, { mode: 'recover', t: 9, x: P.x + 400, y: P.y, vx: 0, vy: 0, face: 1, inv: 0, hp: 1 });
+    Object.assign(A, { mode: 'exposed', t: 9, x: P.x + 400, y: P.y, hx: 1, hy: 0, face: 1, inv: 0, hp: 1 });
     Object.assign(P, { x: A.x - A.len / 2 - 10, y: A.y, vx: 0, vy: 0 });
     game.update(1 / 60);
     for (let i = 0; i < 200 && game.G.phase !== 'portal'; i++) game.update(1 / 60);
@@ -616,16 +632,16 @@ async function run(browser, name, options) {
   });
   check(`${name}: swimming into the portal asks which skills to keep (2 of your 4, for 10 pearls)`, keep.state === 'keep' && keep.n === 4 && keep.info.includes('Keep 2 skills'), JSON.stringify(keep));
   await shot('13-keep');
-  await tap('[data-keep=scales3]');
-  await tap('[data-keep=scales1]');
-  await tap('[data-keep=scales2]'); // a third doesn't fit
+  await tap('[data-keep=spines]');
+  await tap('[data-keep=camouflage]');
+  await tap('[data-keep=toughSkin]'); // a third doesn't fit
   await tap('#keep [data-action=dive]');
   const world2 = await page.evaluate(() => {
     for (let i = 0; i < 60 && game.G.phase !== 'fadein'; i++) __step(1);
     const g = game.G, P = __P();
     return { state: app.state, world: g.world, owned: g.owned, shards: g.shards.size, tier: P.tier, len: Math.round(P.len), want: Math.round(fishLen(1)), title: document.getElementById('bannerTitle').textContent, where: document.getElementById('whereName').textContent };
   });
-  check(`${name}: the next world starts you small, with only the skills you kept and no shards`, world2.state === 'playing' && world2.world === 1 && world2.owned.join() === 'scales3,scales1' && world2.shards === 0 && world2.tier === 1 && world2.len === world2.want && world2.title === 'WORLD 2', JSON.stringify(world2));
+  check(`${name}: the next world starts you small, with only the skills you kept and no shards`, world2.state === 'playing' && world2.world === 1 && world2.owned.join() === 'spines,camouflage' && world2.shards === 0 && world2.tier === 1 && world2.len === world2.want && world2.title === 'WORLD 2', JSON.stringify(world2));
   await page.evaluate(() => __step(90));
   await shot('14-world2');
   check(`${name}: opening a portal is remembered (it unlocks things)`, await page.evaluate(() => progress.portals >= 1 && progress.apexBeaten));
@@ -633,19 +649,40 @@ async function run(browser, name, options) {
   // ---------- Classes ----------
   await tap('#pauseBtn');
   await tap('#pause [data-action=menu]');
-  await page.evaluate(() => { Object.assign(progress, { bestLevel: 99, bestScore: 1e6 }); store.set('gulp-progress', progress); updateMain(); });
+  await page.evaluate(() => { Object.assign(progress, { bestLevel: 99, bestScore: 1e6, apexBeaten: true, portals: 1 }); store.set('gulp-progress', progress); updateMain(); });
   check(`${name}: reaching the goals unlocks every fish`, await page.evaluate(() => document.querySelectorAll('#classes .locked').length === 0));
-  await tap('[data-cls=dart]');
+  await tap('[data-cls=barracuda]');
   await tap('#main [data-action=play]');
-  const dart = await page.evaluate(() => ({ owned: game.G.owned, speed: game.G.stats.speed, cls: game.G.cls.key }));
-  check(`${name}: a Dart run starts with Fast Fins and +20% speed`, dart.cls === 'dart' && dart.owned.includes('fins1') && Math.abs(dart.speed - 1.2 * 1.12) < 1e-9, JSON.stringify(dart));
+  const cuda = await page.evaluate(() => ({ owned: game.G.owned, speed: game.G.stats.speed, cls: game.G.cls.key }));
+  check(`${name}: a Barracuda run starts with Fast Fins and +20% speed`, cuda.cls === 'barracuda' && cuda.owned.includes('fastFins') && Math.abs(cuda.speed - 1.2 * 1.12) < 1e-9, JSON.stringify(cuda));
   await page.evaluate(() => __step(30));
-  await shot('09-dart');
+  await shot('09-barracuda');
   await tap('#pauseBtn');
   await tap('#pause [data-action=menu]');
-  await tap('[data-cls=puffy]');
+  await tap('[data-cls=orca]');
   await tap('#main [data-action=play]');
-  check(`${name}: a Puffy run starts with one Spines charge`, await page.evaluate(() => game.G.cls.key === 'puffy' && __P().shields === 1));
+  check(`${name}: an Orca run starts with a shield`, await page.evaluate(() => game.G.cls.key === 'orca' && __P().shields === 1));
+  await page.evaluate(() => __step(30));
+  await shot('09-orca');
+  await tap('#pauseBtn');
+  await tap('#pause [data-action=menu]');
+  await tap('[data-cls=swordfish]');
+  await tap('#main [data-action=play]');
+  const spear = await page.evaluate(() => {
+    const P = __P();
+    input.mouse = null; // menu clicks left the mouse somewhere: boost straight ahead
+    __step(120);
+    __clear();
+    P.safe = 1e6;
+    P.face = 1;
+    const f = __put('butterfly', 60, 0); // your own size
+    P.charge = 1;
+    game.boost();
+    for (let i = 0; i < 20 && game.G.fish.includes(f); i++) game.update(1 / 60);
+    return { cls: game.G.cls.key, eaten: !game.G.fish.includes(f) };
+  });
+  check(`${name}: the Swordfish spears a fish its own size while boosting`, spear.cls === 'swordfish' && spear.eaten, JSON.stringify(spear));
+  await shot('09-swordfish');
 
   // ---------- Back to the menu ----------
   await tap('#pauseBtn');

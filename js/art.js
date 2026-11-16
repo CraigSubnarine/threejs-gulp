@@ -12,6 +12,7 @@ const SHAPES = {
   round: { h: 0.72, w: 0.66 },
   torpedo: { h: 0.24, w: 0.19 }, // sharks and apexes like the Barracuda: long but with some bulk
   eel: { h: 0.11, w: 0.09 },     // morays, sawfish, oarfish
+  orca: { h: 0.34, w: 0.3 },     // round and solid
 };
 // ---------- Caustics: the rippling sunlight patterns that play over everything underwater ----------
 // Added to three.js's standard material with onBeforeCompile: the fragment shader gets a cheap animated pattern from
@@ -113,6 +114,8 @@ function partsFor(spec) {
     pupil: new THREE.SphereGeometry(0.042 * eye, 8, 6),
     spikes: null, // built when a puffer or a spiny fish needs them
     teeth: spec.teeth ? teethGeometry(sh) : null,
+    bill: spec.bill ? new THREE.ConeGeometry(0.028, 0.5, 6).rotateZ(-Math.PI / 2).translate(0.72, -0.01, 0) : null, // a swordfish's sword
+    patch: spec.patch ? new THREE.SphereGeometry(1, 10, 6) : null, // an orca's white eye patch
   };
   cache.set(spec.key, p);
   return p;
@@ -149,7 +152,7 @@ export function makeFish(spec, variant = null) {
   if (spec.shape !== 'round') {
     const d = new THREE.Mesh(p.dorsal, mats.fin);
     d.position.set(0.02, sh.h / 2 * 0.9 * (sh.head ? 1.05 : 1), 0);
-    d.scale.setScalar(spec.shape === 'disc' ? 1.5 : 1);
+    d.scale.setScalar((spec.shape === 'disc' ? 1.5 : 1) * (spec.dorsal ?? 1)); // sharks and orcas: a tall fin
     pitch.add(d);
   }
   for (const side of [1, -1]) {
@@ -172,6 +175,13 @@ export function makeFish(spec, variant = null) {
     pitch.add(spikes);
   }
   if (p.teeth) pitch.add(new THREE.Mesh(p.teeth, teethMat));
+  if (p.bill) pitch.add(new THREE.Mesh(p.bill, mats.fin));
+  if (p.patch) for (const side of [1, -1]) {
+    const m = new THREE.Mesh(p.patch, eyeMat);
+    m.position.set(0.2, sh.h * 0.13, side * sh.w / 2 * 0.86);
+    m.scale.set(0.11, 0.045, 0.03);
+    pitch.add(m);
+  }
   return { root, yaw, pitch, tail, spikes, mats }; // mats: an apex flashes its own body red when bitten
 }
 

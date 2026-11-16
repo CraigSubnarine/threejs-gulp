@@ -152,12 +152,31 @@ function updateHud() {
   if (shown.perks !== perks) $('perks').textContent = shown.perks = perks;
   const charge = Math.round(P.charge * 50) / 50; // the boost button fills up like a clock while it recharges
   if (shown.charge !== charge) {
-    if (charge >= 1 && shown.charge < 1) beep(1200, 50, 0.025); // a little ping when it's ready again
+    if (Math.floor(charge) > Math.floor(shown.charge ?? 0)) beep(1200, 50, 0.025); // a little ping when a charge is ready
     shown.charge = charge;
-    const b = $('boostBtn');
-    b.style.setProperty('--charge', charge);
+    const b = $('boostBtn'), full = charge >= G.stats.boostCharges;
+    b.style.setProperty('--charge', full ? 1 : charge % 1);
     b.classList.toggle('ready', charge >= 1);
+    b.dataset.n = G.stats.boostCharges > 1 ? `\u00D7${Math.floor(charge)}` : ''; // Double Dash: how many are ready
   }
+  shardArrow();
+}
+
+// An arrow at the edge of the screen pointing the way to the level's shard (Shard Sense) or to a lair apex's wreck,
+// while it's off screen.
+function shardArrow() {
+  const el = $('shardArrow');
+  let show = false;
+  const target = G.apex?.mode === 'lurk' ? G.wreck : G.stats.shardSense && G.phase === 'swim' ? G.shard : null;
+  if (target) {
+    tmp.set(target.x, target.y, 0).project(camera);
+    if (Math.abs(tmp.x) > 0.92 || Math.abs(tmp.y) > 0.92) {
+      const a = Math.atan2(tmp.y * viewH, tmp.x * viewW), k = 0.86 / Math.max(Math.abs(Math.cos(a)), Math.abs(Math.sin(a)));
+      el.style.transform = `translate(${viewLeft + (1 + Math.cos(a) * k) / 2 * viewW}px, ${(1 - Math.sin(a) * k) / 2 * viewH}px) translate(-50%, -50%) rotate(${-a}rad)`;
+      show = true;
+    }
+  }
+  el.hidden = !show;
 }
 
 // ---------- Game state ----------
@@ -165,12 +184,12 @@ function updateHud() {
 // phase while playing: 'swim' | 'dying' | 'cleared' (clear card) | 'widen' (camera pulls back) | 'tree' (skill
 // screen up) | 'fadeout' | 'fadein' (into the next level).
 const G = { mode: 'menu', phase: 'swim', level: 1, zone: null, index: 0, spot: null, scenery: null, seed: 0, spawner: null, fish: [], t: 0,
-  spawnT: 0, phaseT: 0, score: 0, combo: 0, comboT: 0, meter: 0, eatenBy: '', points: 0, owned: [], cls: CLASSES[0], stats: computeStats('scamp', []), windUsed: 0,
-  oysters: [], pickup: null, pickT: 0, pickRand: null, pearls: 0,
+  spawnT: 0, phaseT: 0, score: 0, combo: 0, comboT: 0, meter: 0, eatenBy: '', points: 0, owned: [], cls: CLASSES[0], stats: computeStats('shark', []), windUsed: 0,
+  oysters: [], pickup: null, pickT: 0, pickRand: null, pearls: 0, inkT: 0,
   world: 0, shards: new Set(), worldPearls: 0, wreck: null, shard: null, portal: null, newWorld: false }; // shards: level indexes (0-4) whose shard you have
 
 const P = { obj: null, x: 0, y: 0, vx: 0, vy: 0, len: fishLen(1), tier: 1, face: 1, pulse: 0, safe: 0, alive: false, phase: 0, gulp: 0, boost: 0, charge: 1,
-  stun: 0, shields: 0, gulps: 0, power: null }; // power: the timed power-up you have ({ kind, t })
+  stun: 0, shields: 0, gulps: 0, power: null, ghost: 0, regrowT: 0 }; // power: the timed power-up you have ({ kind, t })
 G.player = P;
 function setClass(cls) { // a different kind of fish: a new model
   if (P.obj && G.cls === cls) return;
@@ -314,11 +333,12 @@ function boost() {
   let { x, y } = stick();
   const m = Math.hypot(x, y);
   if (m < 0.2) { x = P.face; y = 0; } else { x /= m; y /= m; }
-  const s = mySpeed() * BOOST.speed;
+  const s = mySpeed() * BOOST.speed * G.stats.boostSpeed;
   P.vx = x * s;
   P.vy = y * s;
   P.boost = BOOST.time * G.stats.boostTime;
-  P.charge = 0;
+  P.charge -= 1; // Double Dash holds two charges
+  if (G.stats.ghostFin) P.ghost = P.boost + 2; // Ghost Fin: hunters can't see you for 2 s after
   burst(P.x, P.y, 14, 160);
   beep(220, 260, 0.05, 'sawtooth', 3);
   buzz(30);
@@ -330,12 +350,17 @@ function updatePlayer(dt) {
     let speed = mySpeed(), turn = PLAYER.turn;
     if (P.boost > 0) { // boosting: full speed ahead, steering still works
       P.boost -= dt;
-      speed *= BOOST.speed;
+      speed *= BOOST.speed * G.stats.boostSpeed;
       turn *= 2;
       const m = Math.hypot(s.x, s.y), v = Math.hypot(P.vx, P.vy) || 1;
       if (m < 0.2) { s.x = P.vx / v; s.y = P.vy / v; } else { s.x /= m; s.y /= m; }
       if (Math.random() < 0.6) burst(P.x - P.vx / v * P.len * 0.5, P.y - P.vy / v * P.len * 0.5, 1, 30); // bubble trail
-    } else P.charge = Math.min(1, P.charge + dt / (BOOST.recharge * G.stats.boostRecharge));
+      if (G.stats.wake) for (const f of G.fish) if (!canEat(P, f) && Math.hypot(f.x - P.x, f.y - P.y) < P.len * 0.9 + f.len * 0.3) f.stun = Math.max(f.stun, 1.2); // Wake
+    } else P.charge = Math.min(G.stats.boostCharges, P.charge + dt / (BOOST.recharge * G.stats.boostRecharge));
+    P.ghost -= dt;
+    if (G.stats.regrow && P.shields < G.stats.shields) { // Regrow: a used shield grows back
+      if ((P.regrowT += dt) >= G.stats.regrow) { P.shields++; P.regrowT = 0; popup('SHIELD REGROWN', P.x, P.y + P.len, 'combo'); }
+    } else P.regrowT = 0;
     if (P.stun > 0) { P.stun -= dt; speed *= 0.3; } // stung: sluggish for a moment
     if (P.power && (P.power.t -= dt) <= 0) P.power = null;
     if (P.power?.kind === 'rush') speed *= PICKUPS.kinds.rush.speed;
@@ -372,7 +397,7 @@ function updateFish(f, dt) {
     if (live && f.puffT <= -1.5 && d < 200 + P.len * 0.5) { f.puffT = 2.6; beep(220, 160, 0.04, 'sine', 2); }
     const want = f.puffT > 0.5 ? 1 : 0;
     f.puff += (want - f.puff) * Math.min(1, dt * (want ? 9 : 3));
-    f.tier = f.puff > 0.5 ? s.puffTo : s.tier;
+    f.tier = f.puff > 0.5 && !G.stats.ironJaw ? s.puffTo : s.tier; // Iron Jaw: still food when puffed up
     tx *= 1 - f.puff * 0.8;
     ty *= 1 - f.puff * 0.8;
     f.obj.spikes.scale.setScalar(Math.max(f.puff, 0.001));
@@ -388,7 +413,8 @@ function updateFish(f, dt) {
   if (s.behavior === 'hunter' && stunned) f.chase = 0;
   else if (s.behavior === 'hunter') {
     f.rest -= dt;
-    const ghosted = G.stats.combos.ghost && P.boost > 0; // Ghost combo: boosting shakes off hunters
+    const ghosted = (G.stats.combos.ghost && P.boost > 0) || P.ghost > 0; // Ghost combo / Ghost Fin: boosting shakes off hunters
+    const still = G.stats.mimic && Math.hypot(P.vx, P.vy) < 40; // Mimic: hold still and they take you for a rock
     if (f.chase > 0 && live && canEat(f, P) && !ghosted) {
       f.chase -= dt;
       const cs = Math.min(TUNING.chaseSpeed * speedAt(G.level), 0.95) * PLAYER.speed;
@@ -396,10 +422,17 @@ function updateFish(f, dt) {
       ty = dy / d * cs;
       rate = 4;
       if (f.chase <= 0) { f.rest = TUNING.chaseRest; f.dir = Math.sign(f.vx) || f.dir; }
-    } else if (live && !ghosted && canEat(f, P) && f.rest <= 0 && d < TUNING.chaseRange * G.stats.notice && P.safe <= 0) {
-      f.chase = TUNING.chaseTime * G.stats.chase;
-      beep(880, 90, 0.04, 'square');
-      if (!f.warn) scene.add(f.warn = makeWarn());
+    } else if (live && !ghosted && !still && canEat(f, P) && f.rest <= 0 && d < TUNING.chaseRange * G.stats.notice && P.safe <= 0) {
+      if (G.stats.ink && G.inkT <= 0) { // Ink Cloud: a puff of ink and it loses you
+        G.inkT = 10;
+        f.rest = TUNING.chaseRest * 2;
+        popup('INK!', P.x, P.y + P.len, 'ouch');
+        burst(P.x, P.y, 16, 120);
+      } else {
+        f.chase = TUNING.chaseTime * G.stats.chase;
+        beep(880, 90, 0.04, 'square');
+        if (!f.warn) scene.add(f.warn = makeWarn());
+      }
     } else f.chase = 0;
   }
   if (stunned) { tx *= 0.1; ty = -30; rate = 3; } // limp: drifting and sinking slowly
@@ -470,12 +503,12 @@ function eat(f) {
   let grow = GROW[clamp(f.tier, -1, 3)] * st.growth;
   if (v === 'spiny') { // it stings, but it's very filling (Shark Skin: no sting, even more filling)
     grow *= st.combos.sharkSkin ? 3 : V.spiny.growth;
-    const stun = st.combos.sharkSkin ? 0 : V.spiny.stun * st.stun;
+    const stun = st.combos.sharkSkin || st.ironJaw ? 0 : V.spiny.stun * st.stun;
     if (stun > 0) { P.stun = stun; popup('OUCH!', P.x, P.y + P.len * 0.8, 'ouch'); beep(140, 150, 0.05, 'square'); }
   }
   if (v === 'golden' && st.combos.hoarder) P.shields = Math.min(P.shields + 1, st.shields);
-  if (P.boost > 0 && st.refund) P.charge = Math.min(1, P.charge + st.refund);
-  if (st.combos.frenzyFuel && G.combo % 5 === 0) { P.charge = 1; popup('FRENZY!', P.x, P.y + P.len, 'combo'); }
+  if (P.boost > 0 && st.refund) P.charge = Math.min(st.boostCharges, P.charge + st.refund);
+  if (st.combos.frenzyFuel && G.combo % 5 === 0) { P.charge = st.boostCharges; popup('FRENZY!', P.x, P.y + P.len, 'combo'); }
   G.meter = Math.min(METER_NEED, G.meter + grow);
   const tag = v === 'golden' ? ' GOLD!' : '';
   popup(mult > 1 ? `+${pts} ×${mult}${tag}` : `+${pts}`, f.x, f.y + f.len * 0.4, v === 'golden' ? 'gold' : G.combo > 1 ? 'combo' : '');
@@ -547,7 +580,7 @@ function updateOysters(dt, live) {
     }
     o.obj.pearl.visible = o.has;
     const pr = P.len * SHAPE_R[G.cls.spec.shape];
-    if (live && o.has && (mode === 'open' || mode === 'tell') && Math.hypot(P.x - o.x, P.y - (o.y + size * 0.25)) < pr + size * 0.14) takePearl(o);
+    if (live && o.has && (mode === 'open' || mode === 'tell') && Math.hypot(P.x - o.x, P.y - (o.y + size * 0.25)) < pr + size * 0.14 + (G.stats.magnet ? 120 : 0)) takePearl(o);
     if (live && mode === 'snap' && o.mode !== 'snap' && P.safe <= 0 && Math.abs(P.x - o.x) < size * 0.45 + pr * 0.3 && P.y - o.y < size * 0.3 + pr * 0.5) snapOn(o);
     o.mode = mode;
   }
@@ -606,6 +639,8 @@ function updatePickup(dt) {
   p.t -= dt;
   p.y -= PICKUPS.fall * dt;
   p.x += Math.sin(G.t * 1.3) * 25 * dt;
+  const pd = Math.hypot(P.x - p.x, P.y - p.y);
+  if (G.stats.magnet && pd < 700 && pd > 1) { p.x += (P.x - p.x) / pd * 320 * dt; p.y += (P.y - p.y) / pd * 320 * dt; } // Magnet
   p.obj.position.set(p.x, p.y, 0);
   p.obj.visible = p.t > 2 || G.t * 6 % 1 < 0.6; // blinks before it pops
   if (p.t <= 0 || p.y < -WORLD.y + 40) { burst(p.x, p.y, 10, 100); removePickup(); return; }
@@ -646,6 +681,65 @@ function levelCleared(title = 'LEVEL CLEAR!', note = '') {
   jingle([523, 659, 784, 1047, 1319], 110);
   buzz(120);
 }
+// ---------- A lair apex: the Giant Moray in its wreck ----------
+// It hides in one of the wreck's holes. A hole glows and shakes (the tell), then it strikes out towards you and stays
+// stretched out for a moment, tail end still in the hole: bite it there! Then it pulls back in and picks a hole.
+function updateLair(A, dt) {
+  const a = A.a, rage = A.stage > 0 ? 1.35 : 1, len = A.len, holes = G.wreck.holes;
+  const out = k => { // its body k of the way out of the hole (0 hidden, 1 fully out), along its heading
+    A.x = A.hole.x + A.hx * len * (k - 0.5);
+    A.y = A.hole.y + A.hy * len * (k - 0.5);
+  };
+  if (A.mode === 'lurk') { // waiting for you to come to the wreck
+    if (Math.hypot(P.x - G.wreck.x, P.y - G.wreck.y) < 1100) {
+      A.mode = 'hide';
+      A.t = 1.2;
+      popup(`"${a.intro}"`, G.wreck.x, G.wreck.y + 420, 'taunt');
+      boom(500, 0.1);
+    }
+  } else if (A.mode === 'hide' && A.t <= 0) { // pick a hole (the nearest to you, or another one)
+    const sorted = [...holes].sort((h, k) => Math.hypot(P.x - h.x, P.y - h.y) - Math.hypot(P.x - k.x, P.y - k.y));
+    A.hole = Math.random() < 0.6 ? sorted[0] : sorted[1 + Math.floor(Math.random() * (sorted.length - 1))];
+    const kind = a.phases[A.stage][Math.floor(Math.random() * a.phases[A.stage].length)];
+    A.left = kind === 'double' ? 2 : 1;
+    A.mode = 'tell';
+    A.t = a.tell / rage;
+    beep(500, 300, 0.04, 'square', 1.6);
+  } else if (A.mode === 'tell') { // the hole shakes and bubbles
+    if (Math.random() < dt * 30) burst(A.hole.x + (Math.random() - 0.5) * 160, A.hole.y + 40, 1, 60);
+    if (A.t <= 0) { // strike towards where you are, but no steeper than it can pose
+      const p = clamp(Math.atan2(P.y - A.hole.y, Math.abs(P.x - A.hole.x)), -0.6, 0.6), side = Math.sign(P.x - A.hole.x) || A.hole.dir;
+      Object.assign(A, { hx: side * Math.cos(p), hy: Math.sin(p), face: side, mode: 'lunge', t: 1 / (a.lunge * PLAYER.speed * rage / len) });
+      out(0);
+      boom(200, 0.06);
+      beep(150, 220, 0.05, 'sawtooth', 0.5);
+    }
+  } else if (A.mode === 'lunge') { // shooting out of the hole
+    const total = 1 / (a.lunge * PLAYER.speed * rage / len);
+    out(clamp(1 - A.t / total, 0, 1));
+    if (A.t <= 0) { A.mode = 'exposed'; A.t = (A.stage > 0 ? 1.5 : 2) ; out(1); }
+  } else if (A.mode === 'exposed') { // stretched out: its tail is right there
+    if (A.t <= 0) { A.mode = 'retract'; A.t = 0.5; }
+  } else if (A.mode === 'retract') { // pulling back in
+    out(clamp(A.t / 0.5, 0, 1));
+    if (A.t <= 0) {
+      if (--A.left > 0) { A.mode = 'hide'; A.t = 0.25; } // phase 2: straight out of another hole
+      else { A.mode = 'hide'; A.t = (A.stage > 0 ? 1.1 : 1.6) + Math.random() * 0.6; }
+    }
+  }
+  const seen = ['lunge', 'exposed', 'retract'].includes(A.mode);
+  A.obj.root.visible = seen;
+  const sp = A.mode === 'lunge' ? a.lunge * PLAYER.speed * rage : 600; // what pose() reads its heading and swim speed from
+  A.vx = A.hx * sp;
+  A.vy = A.hy * sp;
+  pose(A, dt);
+  A.obj.root.scale.setScalar(A.len);
+  A.obj.mats.body.emissive.setRGB(A.flash, 0, 0);
+  A.warn.visible = A.mode === 'tell';
+  if (A.hole) A.warn.position.set(A.hole.x, A.hole.y + 170, 30);
+  if (seen && G.phase === 'apex' && P.alive) apexTouch(A);
+}
+
 // ---------- The apex predator at the end of a zone ----------
 // It circles you, shakes (a red "!") and lunges. After a lunge it slows right down: that's your chance to bite its
 // tail. Its jaws (the front of its body) eat you. Its health bar splits into phases, and each phase adds attacks.
@@ -658,11 +752,15 @@ function startApex() {
   // stage: which fight phase it's in (not "phase": pose() uses that for the tail wag)
   G.apex = { a, obj, warn, s: { name: a.short }, len, hp, maxHp: hp, stage: 0, phase: 0, mode: 'enter', t: 1.6, left: 0, inv: 0, flash: 0,
     x: P.x + side * ((view.x1 - view.x0) / 2 + len * 0.6), y: clamp(P.y + 150, -WORLD.y + len * 0.2, WORLD.y - len * 0.2),
-    vx: -side * 400, vy: 0, face: -side, ang: Math.atan2(150, side * 600), spin: Math.random() < 0.5 ? 1 : -1 };
+    vx: -side * 400, vy: 0, face: -side, ang: Math.atan2(150, side * 600), spin: Math.random() < 0.5 ? 1 : -1, hole: null, hx: 1, hy: 0 };
+  if (a.lair) { // it waits inside the wreck until you come to it
+    Object.assign(G.apex, { mode: 'lurk', x: G.wreck.x, y: G.wreck.y });
+    obj.root.visible = false;
+  }
   G.phase = 'apex';
   removePickup();
   Object.assign(P, { tier: 3, safe: 1.5, boost: 0 });
-  banner(a.name.toUpperCase(), `"${a.intro}"`, 3200);
+  banner(a.name.toUpperCase(), a.lair ? 'Something huge lives in the wreck. Follow the arrow.' : `"${a.intro}"`, 3200);
   $('bossName').textContent = a.name;
   $('boss').hidden = false;
   shown.boss = null;
@@ -678,6 +776,7 @@ function removeApex() {
 }
 // Its heading, matching how its model is posed: facing left or right, nose tilted up to ±0.6 rad.
 function apexHeading(A) {
+  if (A.a.lair) return { hx: A.hx, hy: A.hy };
   const p = clamp(Math.atan2(A.vy, Math.abs(A.vx) + 20), -0.6, 0.6);
   return { hx: A.face * Math.cos(p), hy: Math.sin(p) };
 }
@@ -701,6 +800,7 @@ function updateApex(dt) {
     A.warn.visible = false;
     return;
   }
+  if (a.lair) return updateLair(A, dt);
   const dx = P.x - A.x, dy = P.y - A.y, d = Math.hypot(dx, dy) || 1;
   let tx = A.vx, ty = A.vy, rate = 3;
   if (A.mode === 'enter' || A.mode === 'circle') { // circles you at a distance
@@ -760,13 +860,13 @@ function apexTouch(A) {
   const me = apexContact(A.x, A.y, hx, hy, A.len, r, P.x, P.y, P.len * SHAPE_R[G.cls.spec.shape]);
   if (bite === 'tail' && A.inv <= 0) return biteApex(A);
   if (me === 'head' && P.safe <= 0) {
-    if (!bitten(A)) { A.mode = 'recover'; A.t = 1.2; } // Spines or Second Wind saved you: it backs off
+    if (!bitten(A)) { A.mode = A.a.lair ? 'retract' : 'recover'; A.t = A.a.lair ? 0.45 : 1.2; } // Spines or Second Wind saved you: it backs off
     return;
   }
   if (me) { const nx = P.x - A.x, ny = P.y - A.y, m = Math.hypot(nx, ny) || 1; P.vx += nx / m * 60; P.vy += ny / m * 60; }
 }
 function biteApex(A) {
-  const dmg = P.boost > 0 ? APEX.boostDamage : 1, pts = APEX.bitePoints * dmg * G.level;
+  const dmg = (P.boost > 0 ? APEX.boostDamage : 1) + G.stats.apexDamage, pts = APEX.bitePoints * dmg * G.level;
   A.hp = Math.max(0, A.hp - dmg);
   A.inv = APEX.inv;
   A.flash = 1;
@@ -776,8 +876,7 @@ function biteApex(A) {
   P.vx = nx / m * 500; // you bounce off
   P.vy = ny / m * 500;
   P.boost = 0;
-  A.vx -= nx / m * 200;
-  A.vy -= ny / m * 200;
+  if (!A.a.lair) { A.vx -= nx / m * 200; A.vy -= ny / m * 200; }
   burst(P.x, P.y, 16, 200);
   beep(200, 120, 0.07, 'square', 0.5);
   boom(150, 0.06);
@@ -788,9 +887,10 @@ function biteApex(A) {
     A.stage = ph;
     popup(`"${A.a.rage}"`, A.x, A.y + A.len * 0.35, 'taunt');
     boom(500, 0.12);
-    A.mode = 'circle';
-    A.t = 1.2;
-  } else if (A.mode === 'circle') A.t = Math.min(A.t, 0.8); // it strikes back soon
+    A.mode = A.a.lair ? 'retract' : 'circle';
+    A.t = A.a.lair ? 0.45 : 1.2;
+  } else if (A.a.lair) { A.mode = 'retract'; A.t = 0.45; A.left = 0; } // bitten: it yanks itself back in
+  else if (A.mode === 'circle') A.t = Math.min(A.t, 0.8); // it strikes back soon
 }
 function apexDefeated(A) {
   noteProgress({ apex: true });
@@ -799,6 +899,7 @@ function apexDefeated(A) {
   G.points += 1; // a bonus point; levelCleared adds the level's own point too
   A.mode = 'dying';
   A.t = 1.8;
+  A.obj.root.visible = true;
   G.phase = 'apexdown';
   G.phaseT = 1.8;
   P.safe = 99;
@@ -819,7 +920,7 @@ function updateShard(dt, live) {
   const d = Math.hypot(P.x - sh.x, P.y - sh.y);
   sh.gem.rotation.y += dt * 1.5;
   sh.glint.visible = G.mode === 'play' && d < 1100 && G.t * 3 % 1 < 0.75;
-  if (live && d < P.len * SHAPE_R[G.cls.spec.shape] + 45) {
+  if (live && d < P.len * SHAPE_R[G.cls.spec.shape] + 45 + (G.stats.magnet ? 120 : 0)) {
     G.shards.add(G.index);
     G.scenery.group.remove(sh.root);
     G.shard = null;
@@ -901,10 +1002,10 @@ function swapLevel() {
   jingle([392, 523, 659], 110);
 }
 // Spend skill points (from the tree screen). Returns true if it worked.
-function buy(branch, i) {
-  if (!canBuy(G.owned, branch, i, G.points)) return false;
-  G.points -= nodeCost(i);
-  G.owned.push(nodeId(branch, i));
+function buy(id) {
+  if (!canBuy(G.owned, id, G.points)) return false;
+  G.points -= nodeCost(findNode(id));
+  G.owned.push(id);
   G.stats = computeStats(G.cls.key, G.owned);
   return true;
 }
@@ -937,6 +1038,7 @@ function update(dt) {
   G.spawnT -= dt;
   if (G.spawnT <= 0 && G.fish.length < TUNING.population && ['swim', 'dying', 'fadein'].includes(G.phase)) { spawn(); G.spawnT = TUNING.spawnEvery; }
   G.comboT -= dt;
+  G.inkT -= dt;
   if (G.phaseT > 0 && (G.phaseT -= dt) <= 0) {
     if (G.phase === 'dying') runOver({ score: G.score, level: G.level, eatenBy: G.eatenBy, world: G.world + 1, shards: G.shards.size });
     else if (G.phase === 'cleared') { G.phase = 'widen'; G.phaseT = WIDEN_T; }
@@ -959,11 +1061,11 @@ function update(dt) {
 function render() { renderer.render(scene, camera); }
 
 // ---------- Called by the menus (ui.js) ----------
-function startRun(seed = Math.floor(Math.random() * 1e9), classKey = 'scamp') {
+function startRun(seed = Math.floor(Math.random() * 1e9), classKey = 'shark') {
   setClass(CLASSES.find(c => c.key === classKey) ?? CLASSES[0]);
   Object.assign(G, { mode: 'play', seed, level: 1, score: 0, combo: 0, comboT: 0, points: 0, windUsed: 0, pearls: 0, world: 0, shards: new Set(), worldPearls: 0, newWorld: false, owned: G.cls.free ? [G.cls.free] : [] });
   G.stats = computeStats(G.cls.key, G.owned);
-  Object.assign(P, { alive: true, gulp: 0, len: fishLen(1), pulse: 0, face: 1, boost: 0, charge: 1 });
+  Object.assign(P, { alive: true, gulp: 0, len: fishLen(1), pulse: 0, face: 1, boost: 0, charge: G.stats.boostCharges, ghost: 0, regrowT: 0 });
   P.obj.root.visible = true;
   cam.dist = camDist(VIEW_H[1]);
   shown = {};
@@ -981,7 +1083,7 @@ function toMenu() {
   G.level = 1 + Math.floor(Math.random() * LEVELS_PER_ZONE); // a different reef spot behind the menu each time
   G.seed = 'menu';
   G.world = 0;
-  G.stats = computeStats('scamp', []);
+  G.stats = computeStats('shark', []);
   startLevel();
 }
 

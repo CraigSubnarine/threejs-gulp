@@ -141,19 +141,21 @@ const apexPhase = (hp, maxHp, phases) => Math.min(phases - 1, Math.floor((1 - hp
 const apexHp = (apex, loop) => Math.round(apex.hp * (1 + APEX.toughness * loop));
 
 // ---------- Skill tree ----------
-const nodeId = (branch, i) => `${branch}${i + 1}`;           // fins1 .. scales5
-const nodeCost = i => i + 1;                                  // node n costs n points
-const findNode = id => { const b = SKILLS.find(s => id.startsWith(s.key)); return b && { branch: b, i: Number(id.slice(b.key.length)) - 1 }; };
-// You can buy a node if you don't own it, own the one before it in its branch, and have the points.
-const canBuy = (owned, branch, i, points) => !owned.includes(nodeId(branch, i)) && (i === 0 || owned.includes(nodeId(branch, i - 1))) && points >= nodeCost(i);
-const skillName = id => { const n = findNode(id); return n ? n.branch.nodes[n.i].name : id; };
+const ALL_NODES = SKILLS.flatMap(b => b.nodes.map(n => ({ ...n, branch: b })));
+const findNode = id => ALL_NODES.find(n => n.id === id);
+const nodeCost = node => ROW_COST[node.row];
+const skillName = id => findNode(id)?.name ?? id;
+// A node opens once you own any one of the nodes it needs (the top of each branch needs nothing).
+const nodeOpen = (owned, node) => !node.needs.length || node.needs.some(id => owned.includes(id));
+const canBuy = (owned, id, points) => { const n = findNode(id); return !!n && !owned.includes(id) && nodeOpen(owned, n) && points >= nodeCost(n); };
 const combosFor = owned => COMBOS.filter(c => c.needs.every(n => owned.includes(n)));
 
 // Your stats, rebuilt from scratch from your class and the nodes you own (so stacking can't drift).
-const ADD_STATS = ['shields', 'gulps', 'secondWind', 'refund', 'comboGap', 'comboMax'];
+const ADD_STATS = ['shields', 'gulps', 'secondWind', 'refund', 'comboGap', 'comboMax', 'apexDamage', 'boostCharges', 'regrow'];
 function computeStats(classKey, owned) {
-  const s = { speed: 1, reach: 1, growth: 1, boostRecharge: 1, boostTime: 1, variants: 1, notice: 1, chase: 1, stun: 1,
-    shields: 0, gulps: 0, secondWind: 0, refund: 0, comboGap: COMBO_GAP, comboMax: COMBO_MAX, torpedo: false, combos: {} };
+  const s = { speed: 1, reach: 1, growth: 1, boostRecharge: 1, boostTime: 1, boostSpeed: 1, variants: 1, notice: 1, chase: 1, stun: 1, oysterOpen: 1, pearlMul: 1,
+    shields: 0, gulps: 0, secondWind: 0, refund: 0, comboGap: COMBO_GAP, comboMax: COMBO_MAX, apexDamage: 0, boostCharges: 1, regrow: 0,
+    torpedo: false, wake: false, ghostFin: false, magnet: false, ironJaw: false, shardSense: false, ink: false, mimic: false, oysterProof: false, combos: {} };
   const apply = mods => {
     for (const [k, v] of Object.entries(mods)) {
       if (typeof v === 'boolean') s[k] = v;
@@ -162,10 +164,17 @@ function computeStats(classKey, owned) {
     }
   };
   apply(CLASSES.find(c => c.key === classKey)?.mods ?? {});
-  for (const id of owned) { const n = findNode(id); if (n) apply(n.branch.nodes[n.i].mods); }
+  for (const id of owned) { const n = findNode(id); if (n) apply(n.mods); }
   for (const c of combosFor(owned)) s.combos[c.key] = true;
   return s;
 }
 
-// A class is open once its unlock is met (best level reached / best score in one run, kept between runs).
-const classUnlocked = (cls, progress) => !cls.unlock || (cls.unlock.level ? progress.bestLevel >= cls.unlock.level : progress.bestScore >= cls.unlock.score);
+// A class is open once its unlock is met (kept between runs): a level reached, an apex beaten, a portal opened.
+function classUnlocked(cls, progress) {
+  const u = cls.unlock;
+  if (!u) return true;
+  if (u.level) return progress.bestLevel >= u.level;
+  if (u.apex) return !!progress.apexBeaten;
+  if (u.portal) return (progress.portals ?? 0) > 0;
+  return progress.bestScore >= u.score;
+}

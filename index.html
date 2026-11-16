@@ -86,18 +86,48 @@
   .cls.sel { border-color: var(--orange); background: #ffe6d6; }
   .cls.locked img { filter: grayscale(1) brightness(.6); opacity: .6; }
   .cls.locked span { color: var(--muted); }
-  /* The skill tree: three branches side by side, each a column of nodes that unlock top to bottom. */
-  .screen.wide { width: min(460px, 100%); }
-  #treeGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
-  .branch { display: flex; flex-direction: column; gap: 5px; }
-  .branch h3 { margin: 0; font-family: "Lilita One", sans-serif; font-weight: 400; color: var(--c); font-size: 1.15rem; }
-  .node { min-height: 50px; padding: 4px; font-size: .78rem; line-height: 1.15; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; border: 2px solid transparent; }
-  .node small { font-size: .7rem; color: var(--muted); }
-  .node.owned { background: var(--c); color: #fff; }
-  .node.owned small { color: #fff; }
-  .node.open { border: 2px dashed var(--c); background: #fff; }
-  .node.locked { opacity: .45; }
-  .node.sel { outline: 3px solid var(--text); outline-offset: 1px; }
+  /* The skill tree: three dark panels, each a web of glowing hexagons joined by lines under its branch's emblem.
+     On a narrow screen one panel shows at a time, picked with the tabs. */
+  #tree.screen { width: min(820px, 100%); background: #10181d; border-color: #2c3a42; box-shadow: 0 8px 0 #2c3a42, 0 12px 30px rgb(0 0 0 / .5); }
+  #tree h2 { color: #ffe066; }
+  #tree .big { color: #fff !important; }
+  #tree .hint, #tree p { color: #b9c8cf; }
+  #tree button:not(.hex):not(.tab) { background: #22313a; color: #e6f2f6; }
+  #tree button.primary { background: var(--orange); color: #fff; }
+  #treeTabs { display: none; gap: 6px; }
+  .tab { flex: 1; min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 6px; background: #18232a; color: var(--c); border: 2px solid #2c3a42; font-size: .95rem; }
+  .tab svg { width: 22px; height: 22px; }
+  .tab.on { border-color: var(--c); box-shadow: 0 0 12px color-mix(in srgb, var(--c) 45%, transparent); }
+  #treeGrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .panel { position: relative; padding: 12px 4px 16px; border-radius: 12px; border: 1px solid color-mix(in srgb, var(--c) 35%, #2c3a42);
+    background: radial-gradient(circle at 50% 0, color-mix(in srgb, var(--c) 18%, transparent), transparent 55%), repeating-linear-gradient(45deg, #151f25 0 6px, #131c21 6px 12px); }
+  .panel h3 { margin: 6px 0 4px; font-family: "Lilita One", sans-serif; font-weight: 400; color: var(--c); font-size: 1.15rem; }
+  .panel h3 small { font-family: Nunito, sans-serif; font-weight: 800; font-size: .65rem; color: #8aa0aa; letter-spacing: .1em; text-transform: uppercase; }
+  .emblem { width: 52px; height: 52px; margin: 0 auto; border-radius: 50%; display: grid; place-items: center; color: var(--c); background: #0c1317; border: 3px solid var(--c);
+    box-shadow: 0 0 18px color-mix(in srgb, var(--c) 60%, transparent), inset 0 0 10px color-mix(in srgb, var(--c) 40%, transparent); }
+  .emblem svg { width: 30px; height: 30px; }
+  .web { position: relative; }
+  .web svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  .web path { fill: none; stroke: var(--c); stroke-width: 2.5; opacity: .25; vector-effect: non-scaling-stroke; }
+  .web path.lit { opacity: .95; }
+  .hex { position: absolute; width: 54px; height: 60px; min-height: 0; margin: -30px 0 0 -27px; padding: 0; border-radius: 0; background: var(--c);
+    clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); transition: transform .15s; }
+  .hex span { position: absolute; inset: 3px; clip-path: polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%); background: #121c22; color: var(--c); display: grid; place-items: center; }
+  .hex svg { width: 26px; height: 26px; }
+  .hex.owned span { background: color-mix(in srgb, var(--c) 55%, #121c22); color: #fff; }
+  .hex.open { animation: hexglow 1.6s ease-in-out infinite; }
+  .hex.locked { background: #34444c; }
+  .hex.locked span { color: #52636b; }
+  .hex.sel { transform: scale(1.15); }
+  .hex:focus-visible { outline: none; transform: scale(1.15); }
+  @keyframes hexglow { 50% { filter: brightness(1.45); } }
+  #treeDetail { min-height: 2.6em; }
+  @media (max-width: 640px) {
+    #treeTabs { display: flex; }
+    #treeGrid { grid-template-columns: 1fr; }
+    .panel { display: none; }
+    .panel.on { display: block; }
+  }
   #treeCombos { font-size: .8rem; text-align: left; color: var(--muted); display: flex; flex-direction: column; gap: 3px; }
   #treeCombos .on { color: var(--good); }
   /* The keep screen: your skills as toggles. */
@@ -121,6 +151,10 @@
     h1 { font-size: 2.6rem; }
     #chain, #meterRow, #boss, #perks { max-width: 60%; }
   }
+  /* Shard Sense: an arrow at the edge of the screen pointing to the level's shard. */
+  #shardArrow { position: fixed; left: 0; top: 0; z-index: 1; pointer-events: none; color: #6fe0ff; font-size: 2rem; text-shadow: 0 0 10px #3fc8ff; }
+  #boostBtn::after { content: attr(data-n); position: absolute; top: -6px; right: -4px; font-family: "Lilita One", sans-serif; font-size: .95rem; color: #fff; background: var(--deep); border-radius: 10px; padding: 0 6px; }
+  #boostBtn:not([data-n])::after, #boostBtn[data-n=""]::after { display: none; }
   @keyframes rise { to { transform: translate(-50%, -160%); opacity: 0; } }
   /* The floating joystick: a ring where your thumb went down and a knob that follows it. */
   #stick { position: fixed; z-index: 1; width: 112px; height: 112px; margin: -56px 0 0 -56px; border-radius: 50%; border: 3px solid rgb(255 255 255 / .35); background: rgb(255 255 255 / .08); pointer-events: none; }
@@ -155,6 +189,7 @@
 <div id="fade"></div>
 <div id="banner" hidden><b id="bannerTitle"></b><span id="bannerSub"></span></div>
 <div id="pops"></div>
+<div id="shardArrow" hidden>&#10148;</div>
 <div id="stick" hidden><i id="knob"></i></div>
 
 <div id="ui">
@@ -192,6 +227,7 @@
   <section class="screen wide" id="tree" hidden>
     <h2 id="treeTitle">LEVEL CLEAR!</h2>
     <p class="big" id="treePoints"></p>
+    <div id="treeTabs"></div>
     <div id="treeGrid"></div>
     <p class="hint" id="treeDetail"></p>
     <button class="primary" data-action="learn" id="learnBtn" hidden>Learn</button>

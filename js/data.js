@@ -29,7 +29,7 @@ const COMBO_GAP = 1.5;                // seconds between eats that keeps a combo
 const COMBO_MAX = 8;
 const CLEAR_BONUS = 400;              // × the level number, when a level's meter fills
 const LEVELS_PER_ZONE = 5;
-const SHAPE_R = { oval: 0.3, disc: 0.36, fat: 0.33, long: 0.2, round: 0.38, torpedo: 0.24, eel: 0.15 }; // touch radius, as a share of length
+const SHAPE_R = { oval: 0.3, disc: 0.36, fat: 0.33, long: 0.2, round: 0.38, torpedo: 0.24, eel: 0.15, orca: 0.3 }; // touch radius, as a share of length
 
 const PLAYER = {
   speed: 380,       // units per second at full stick
@@ -64,7 +64,9 @@ const APEX = {
   view: 1.3,        // the camera shows this much more than at tier 3 during the fight
   toughness: 0.5,   // each time round the zones, apexes get 50% more health
 };
-const APEX_ATTACKS = ['lunge', 'flurry']; // lunge: shake, then dash at you; flurry: three quick short lunges
+// lunge: shake, then dash at you; flurry: three quick short lunges; ambush (lair apexes): a hole glows and shakes, it
+// strikes out and stays stretched out (bite its tail!), then pulls back in; double: two holes in a row.
+const APEX_ATTACKS = ['lunge', 'flurry', 'ambush', 'double'];
 
 // Oysters on the sea floor (perLevel each level): closed, then open with a pearl showing, then a shiver (the tell),
 // then they snap shut (seconds for each). A pearl is worth white/black × the level in points and counts 1 or
@@ -110,12 +112,13 @@ const ZONES = [
   {
     key: 'reef', name: 'Sunny Reef', sub: 'Warm, shallow and full of snacks',
     water: { top: 0x8be3f2, bottom: 0x1d86b0 }, sun: 1.9, sky: 0xd8f8ff, ground: 0x3a8fa8, floor: 0xf2d9a0,
-    // size: × a full-grown you; speed: circling speed × your base speed; lunge: dash speed × your base speed;
+    // size: × a full-grown you; speed: circling speed × your base speed (apexes that chase); lunge: dash speed × your base speed;
     // tell: seconds of shaking before a lunge. Taunts are original lines.
-    apex: { key: 'barracuda', name: 'The Barracuda', short: 'Barracuda', size: 2.6, hp: 6, speed: 0.75, lunge: 2.5, tell: 0.7,
-      phases: [['lunge'], ['lunge', 'flurry']],
-      intro: 'This reef has one rule: I eat first.', rage: 'Bitten? ME? Now you\'re dinner.', defeat: 'Fine... keep your little reef.',
-      spec: { shape: 'torpedo', body: 0x8fa3b4, belly: 0xeef4f8, fin: 0x4f6a7c, stripe: 0x34495a, stripes: [-0.34, -0.22, -0.1, 0.02, 0.14], eye: 0.7, teeth: true } },
+    // lair: it lives in the level's wreck and strikes out of its holes (attacks: ambush, double) instead of chasing.
+    apex: { key: 'moray', name: 'The Giant Moray', short: 'Moray', size: 3.2, hp: 6, lunge: 2.6, tell: 0.9, lair: true,
+      phases: [['ambush'], ['ambush', 'double']],
+      intro: 'You swam into MY wreck? Bold little snack.', rage: 'OW! Right, no more hiding.', defeat: 'Fine... the wreck is yours.',
+      spec: { shape: 'long', body: 0x5f7f2c, belly: 0xd0dc80, fin: 0x445f1f, stripe: 0x34491a, stripes: [-0.32, -0.2, -0.08, 0.04, 0.16], eye: 0.75, teeth: true } }, // thicker than a reef moray, with a small mean eye
     // The reef's size ladder, smallest first. Level 1 shows ranks 0-3, level 2 ranks 1-5 (1 = leftover snacks),
     // level 3 ranks 3-7, level 4 ranks 5-9, level 5 ranks 7-11. puffBy: how many sizes a puffer grows when it puffs up.
     fish: [
@@ -161,54 +164,75 @@ const ZONES = [
 ];
 
 // ---------- The skill tree ----------
-// 3 branches of 5 nodes. You get 1 point per level cleared. Node n of a branch costs n points and needs node n-1,
-// so a full branch costs 15 and everything costs 45: a full run (25 levels) can't buy it all.
-// mods: numbers multiply these stats: speed, reach, growth, boostRecharge (time), boostTime, variants, notice, chase,
-// stun; and add to these: shields, gulps, secondWind, refund, comboGap, comboMax. true switches a power on.
+// Three branches, each a web of 10 nodes on a 3-column grid (col -1, 0, 1; row 0 at the top): a spine down the
+// middle with side nodes branching off it. A node opens once you own ANY one of the nodes in its `needs`, so paths
+// split and join again. Its cost goes by its row (ROW_COST). Points come from levels (1 each), pearls (1 per 5) and
+// apexes (1 each): about 10 a world, against about 23 to fill a single branch, so each world you pick a direction.
+// The portal resets the tree (you keep a skill or two), so the next world can try another.
+// mods: numbers multiply speed, reach, growth, boostRecharge (time), boostTime, boostSpeed, variants, notice, chase,
+// stun, oysterOpen, pearlMul; and add to shields, gulps, secondWind, refund, comboGap, comboMax, apexDamage,
+// boostCharges, regrow (seconds). true switches a power on. icon: a glyph from ui.js.
+const ROW_COST = [1, 1, 2, 3, 4];
 const SKILLS = [
-  { key: 'fins', name: 'Fins', color: '#4fc3ff', nodes: [
-    { name: 'Fast Fins', desc: '+12% swim speed', mods: { speed: 1.12 } },
-    { name: 'Quick Charge', desc: 'Boost recharges 30% faster', mods: { boostRecharge: 0.7 } },
-    { name: 'Long Boost', desc: 'Boosts last 60% longer', mods: { boostTime: 1.6 } },
-    { name: 'Afterburn', desc: 'Each bite during a boost gives back a third of the charge', mods: { refund: 0.35 } },
-    { name: 'Torpedo', desc: 'While boosting you can eat fish your own size', mods: { torpedo: true } },
+  { key: 'scales', name: 'Scales', color: '#4fe07a', emblem: 'target', blurb: 'Survive', nodes: [
+    { id: 'camouflage', name: 'Camouflage', row: 0, col: 0, needs: [], icon: 'eye', desc: 'Hunters notice you 35% later', mods: { notice: 0.65 } },
+    { id: 'toughSkin', name: 'Tough Skin', row: 1, col: -1, needs: ['camouflage'], icon: 'shield', desc: 'Stings and pinches stun you half as long', mods: { stun: 0.5 } },
+    { id: 'inkCloud', name: 'Ink Cloud', row: 1, col: 1, needs: ['camouflage'], icon: 'cloud', desc: 'When a hunter starts to chase you, a puff of ink makes it lose you (every 10 s)', mods: { ink: true } },
+    { id: 'oysterProof', name: 'Oyster Proof', row: 2, col: -1, needs: ['toughSkin'], icon: 'shell', desc: 'Oysters can\'t catch you, whatever your size', mods: { oysterProof: true } },
+    { id: 'spines', name: 'Spines', row: 2, col: 0, needs: ['toughSkin', 'inkCloud'], icon: 'spikes', desc: 'Once per level, a bite on you gets spat out', mods: { shields: 1 } },
+    { id: 'mimic', name: 'Mimic', row: 2, col: 1, needs: ['inkCloud'], icon: 'rock', desc: 'Hunters ignore you while you hold still', mods: { mimic: true } },
+    { id: 'slippery', name: 'Slippery', row: 3, col: -1, needs: ['oysterProof', 'spines'], icon: 'drop', desc: 'Hunters give up 40% sooner', mods: { chase: 0.6 } },
+    { id: 'shellUp', name: 'Shell Up', row: 3, col: 1, needs: ['spines', 'mimic'], icon: 'bubble', desc: 'Start every level with one more shield', mods: { shields: 1 } },
+    { id: 'regrow', name: 'Regrow', row: 4, col: -1, needs: ['slippery'], icon: 'regrow', desc: 'A used shield grows back after 45 s', mods: { regrow: 45 } },
+    { id: 'secondWind', name: 'Second Wind', row: 4, col: 0, needs: ['slippery', 'shellUp'], icon: 'heart', desc: 'Once per world, survive being eaten', mods: { secondWind: 1 } },
   ] },
-  { key: 'jaws', name: 'Jaws', color: '#ff7a2f', nodes: [
-    { name: 'Big Mouth', desc: 'Bite from 20% further away', mods: { reach: 1.2 } },
-    { name: 'Glutton', desc: '+25% growth from every bite', mods: { growth: 1.25 } },
-    { name: 'Frenzy', desc: 'Combos last 1 s longer and go up to ×12', mods: { comboGap: 1, comboMax: 4 } },
-    { name: 'Treasure Nose', desc: 'Rare fish show up 2.5× as often', mods: { variants: 2.5 } },
-    { name: 'Gulp', desc: 'Once per level, swallow a fish one size bigger than you', mods: { gulps: 1 } },
+  { key: 'jaws', name: 'Jaws', color: '#ff5a4a', emblem: 'skull', blurb: 'Hunt', nodes: [
+    { id: 'bigMouth', name: 'Big Mouth', row: 0, col: 0, needs: [], icon: 'mouth', desc: 'Bite from 20% further away', mods: { reach: 1.2 } },
+    { id: 'glutton', name: 'Glutton', row: 1, col: -1, needs: ['bigMouth'], icon: 'bowl', desc: '+25% growth from every bite', mods: { growth: 1.25 } },
+    { id: 'pearlDiver', name: 'Pearl Diver', row: 1, col: 1, needs: ['bigMouth'], icon: 'pearl', desc: 'Oysters stay open 60% longer, and pearls count double', mods: { oysterOpen: 1.6, pearlMul: 2 } },
+    { id: 'frenzy', name: 'Frenzy', row: 2, col: -1, needs: ['glutton'], icon: 'star', desc: 'Combos last 1 s longer and go up to ×12', mods: { comboGap: 1, comboMax: 4 } },
+    { id: 'sharpTeeth', name: 'Sharp Teeth', row: 2, col: 0, needs: ['glutton', 'pearlDiver'], icon: 'tooth', desc: '+1 damage on every bite on an apex', mods: { apexDamage: 1 } },
+    { id: 'magnet', name: 'Magnet', row: 2, col: 1, needs: ['pearlDiver'], icon: 'magnet', desc: 'Pearls, power-ups and shards are pulled towards you', mods: { magnet: true } },
+    { id: 'ironJaw', name: 'Iron Jaw', row: 3, col: -1, needs: ['frenzy', 'sharpTeeth'], icon: 'jaw', desc: 'Spiny fish don\'t sting, and puffed-up puffers are still food', mods: { ironJaw: true } },
+    { id: 'shardSense', name: 'Shard Sense', row: 3, col: 1, needs: ['sharpTeeth', 'magnet'], icon: 'compass', desc: 'An arrow at the edge of the screen points to the level\'s shard', mods: { shardSense: true } },
+    { id: 'treasureNose', name: 'Treasure Nose', row: 4, col: 1, needs: ['shardSense'], icon: 'gem', desc: 'Rare fish show up 2.5× as often', mods: { variants: 2.5 } },
+    { id: 'gulp', name: 'Gulp', row: 4, col: 0, needs: ['ironJaw', 'shardSense'], icon: 'gulp', desc: 'Once per level, swallow a fish one size bigger than you', mods: { gulps: 1 } },
   ] },
-  { key: 'scales', name: 'Scales', color: '#2ec98a', nodes: [
-    { name: 'Camouflage', desc: 'Hunters notice you 35% later', mods: { notice: 0.65 } },
-    { name: 'Tough Skin', desc: 'Stings stun you half as long', mods: { stun: 0.5 } },
-    { name: 'Spines', desc: 'Once per level, a bite on you gets spat out', mods: { shields: 1 } },
-    { name: 'Slippery', desc: 'Hunters give up 40% sooner', mods: { chase: 0.6 } },
-    { name: 'Second Wind', desc: 'Once per run, survive being eaten', mods: { secondWind: 1 } },
+  { key: 'fins', name: 'Fins', color: '#ffd23b', emblem: 'bolt', blurb: 'Speed', nodes: [
+    { id: 'fastFins', name: 'Fast Fins', row: 0, col: 0, needs: [], icon: 'fin', desc: '+12% swim speed', mods: { speed: 1.12 } },
+    { id: 'quickCharge', name: 'Quick Charge', row: 1, col: -1, needs: ['fastFins'], icon: 'gauge', desc: 'Boost recharges 30% faster', mods: { boostRecharge: 0.7 } },
+    { id: 'slipstream', name: 'Slipstream', row: 1, col: 1, needs: ['fastFins'], icon: 'wind', desc: 'Boosts are 25% faster', mods: { boostSpeed: 1.25 } },
+    { id: 'doubleDash', name: 'Double Dash', row: 2, col: -1, needs: ['quickCharge'], icon: 'double', desc: 'Hold two boost charges', mods: { boostCharges: 1 } },
+    { id: 'longBoost', name: 'Long Boost', row: 2, col: 0, needs: ['quickCharge', 'slipstream'], icon: 'arrow', desc: 'Boosts last 60% longer', mods: { boostTime: 1.6 } },
+    { id: 'wake', name: 'Wake', row: 2, col: 1, needs: ['slipstream'], icon: 'wave', desc: 'Boosting past a fish knocks it out for a moment', mods: { wake: true } },
+    { id: 'afterburn', name: 'Afterburn', row: 3, col: -1, needs: ['doubleDash', 'longBoost'], icon: 'flame', desc: 'Each bite during a boost gives back a third of the charge', mods: { refund: 0.35 } },
+    { id: 'ghostFin', name: 'Ghost Fin', row: 3, col: 1, needs: ['longBoost', 'wake'], icon: 'ghost', desc: 'For 2 s after a boost, hunters can\'t see you', mods: { ghostFin: true } },
+    { id: 'jetStream', name: 'Jet Stream', row: 4, col: -1, needs: ['afterburn'], icon: 'jet', desc: '+15% swim speed', mods: { speed: 1.15 } },
+    { id: 'torpedo', name: 'Torpedo', row: 4, col: 0, needs: ['afterburn', 'ghostFin'], icon: 'torpedo', desc: 'While boosting you can eat fish your own size', mods: { torpedo: true } },
   ] },
 ];
-// Owning both nodes unlocks a bonus. Node ids are branch key + number, e.g. fins2.
+// Owning both nodes unlocks a bonus.
 const COMBOS = [
-  { key: 'frenzyFuel', name: 'Feeding Frenzy', needs: ['fins2', 'jaws3'], desc: 'Every ×5 combo refills your boost' },
-  { key: 'ghost', name: 'Ghost', needs: ['fins1', 'scales1'], desc: 'While boosting, hunters lose track of you' },
-  { key: 'sharkSkin', name: 'Shark Skin', needs: ['jaws2', 'scales2'], desc: 'Spiny fish never sting you and give ×3 growth' },
-  { key: 'hoarder', name: 'Hoarder', needs: ['jaws4', 'scales3'], desc: 'Eating a golden fish regrows your Spines' },
+  { key: 'frenzyFuel', name: 'Feeding Frenzy', needs: ['quickCharge', 'frenzy'], desc: 'Every ×5 combo refills your boost' },
+  { key: 'ghost', name: 'Ghost', needs: ['fastFins', 'camouflage'], desc: 'While boosting, hunters lose track of you' },
+  { key: 'sharkSkin', name: 'Shark Skin', needs: ['glutton', 'toughSkin'], desc: 'Spiny fish never sting you and give ×3 growth' },
+  { key: 'hoarder', name: 'Hoarder', needs: ['treasureNose', 'spines'], desc: 'Eating a golden fish regrows a used shield' },
 ];
 
 // ---------- Classes: the kind of fish you start as ----------
-// mods work like skill mods; free: a node you start with; unlock: what opens it up (best level reached, or best
-// score in one run). spec: how it looks.
+// You start as a young one (tier 1) whatever you are. mods work like skill mods; free: a skill you start with (and
+// keep through portals); unlock: what opens it up (best level reached, beating an apex, opening a portal).
+// spec: how it looks.
 const CLASSES = [
-  { key: 'scamp', name: 'Scamp', desc: 'An all-rounder', mods: {}, free: null, unlock: null,
-    spec: { shape: 'oval', body: 0xff7a2f, belly: 0xffe0b0, fin: 0xff4d4d, stripe: 0xffffff, stripes: [0.18], eye: 1.35 } },
-  { key: 'dart', name: 'Dart', desc: '+20% speed and a quicker boost, but a smaller bite', mods: { speed: 1.2, boostRecharge: 0.85, reach: 0.85 }, free: 'fins1',
+  { key: 'shark', name: 'Shark', desc: 'An all-rounder with a bigger bite', mods: { reach: 1.12 }, free: null, unlock: null,
+    spec: { shape: 'torpedo', body: 0x6f8494, belly: 0xf1f5f8, fin: 0x52687a, eye: 1.2, dorsal: 1.7 } },
+  { key: 'barracuda', name: 'Barracuda', desc: '+20% speed and a quicker boost, but a smaller bite', mods: { speed: 1.2, boostRecharge: 0.8, reach: 0.85 }, free: 'fastFins',
     unlock: { level: 3, text: 'Reach level 3' },
-    spec: { shape: 'long', body: 0x7fb2d6, belly: 0xeaf6ff, fin: 0x3d7fb8, stripe: 0x2a5d8a, stripes: [-0.3, 0.3], eye: 1.6 } },
-  { key: 'puffy', name: 'Puffy', desc: 'Survives one bite per level, but 15% slower', mods: { speed: 0.85, shields: 1 }, free: 'scales1',
-    unlock: { level: 6, text: 'Clear all 5 reef levels' },
-    spec: { shape: 'round', body: 0x9be36b, belly: 0xf2ffd8, fin: 0x5aa83a, stripe: 0x4f8a2f, stripes: [0], eye: 1.3 } },
-  { key: 'gobbler', name: 'Gobbler', desc: 'A huge bite and +20% growth, but a slow boost', mods: { reach: 1.25, growth: 1.2, boostRecharge: 1.25 }, free: 'jaws1',
-    unlock: { score: 20000, text: 'Score 20,000 in one run' },
-    spec: { shape: 'fat', body: 0x8f6bd8, belly: 0xe9dcff, fin: 0xc05ad6, stripe: 0x5d3fa8, stripes: [-0.25, 0.1], eye: 1.25 } },
+    spec: { shape: 'torpedo', body: 0x8fa3b4, belly: 0xeef4f8, fin: 0x4f6a7c, stripe: 0x34495a, stripes: [-0.3, -0.15, 0, 0.15], eye: 1.3, teeth: true } },
+  { key: 'orca', name: 'Orca', desc: 'Tough: survives one bite per level, but 13% slower', mods: { speed: 0.87, shields: 1 }, free: 'camouflage',
+    unlock: { apex: true, text: 'Beat the reef\'s apex' },
+    spec: { shape: 'orca', body: 0x16181d, belly: 0xf4f6f8, fin: 0x16181d, eye: 0.9, dorsal: 2.2, patch: true } },
+  { key: 'swordfish', name: 'Swordfish', desc: 'Spear: eats fish its own size while boosting. The fastest boost, but a slow recharge', mods: { boostSpeed: 1.3, boostRecharge: 1.35, torpedo: true }, free: null,
+    unlock: { portal: true, text: 'Open a portal' },
+    spec: { shape: 'torpedo', body: 0x3b5f8f, belly: 0xdde8f2, fin: 0x2a4670, eye: 1.3, bill: true, dorsal: 1.4 } },
 ];

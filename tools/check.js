@@ -6,10 +6,10 @@ const vm = require('vm');
 // Load the plain scripts the way the page does: in order, sharing globals.
 for (const f of ['data.js', 'rules.js']) vm.runInThisContext(fs.readFileSync(path.join(__dirname, '..', 'js', f), 'utf8'), { filename: f });
 const names = ['ZONES', 'METER_NEED', 'GROW', 'COMBO_MAX', 'COMBO_GAP', 'TUNING', 'SKILLS', 'COMBOS', 'CLASSES', 'VARIANTS', 'VARIANT_CHANCE', 'LEVELS_PER_ZONE', 'RANKS_PER_LEVEL', 'LEVEL_SCALE',
-  'fishLen', 'canEat', 'tierFor', 'pointsFor', 'scoreFor', 'speedAt', 'makeSpawner', 'levelFish', 'hashSeed', 'levelInfo', 'nodeId', 'nodeCost', 'canBuy', 'combosFor', 'computeStats', 'classUnlocked'];
+  'fishLen', 'canEat', 'tierFor', 'pointsFor', 'scoreFor', 'speedAt', 'makeSpawner', 'levelFish', 'hashSeed', 'levelInfo', 'findNode', 'nodeCost', 'canBuy', 'combosFor', 'computeStats', 'classUnlocked'];
 const G = Object.fromEntries(names.map(n => [n, vm.runInThisContext(n)]));
 const { ZONES, METER_NEED, GROW, COMBO_MAX, COMBO_GAP, TUNING, SKILLS, COMBOS, CLASSES, VARIANTS, VARIANT_CHANCE, LEVELS_PER_ZONE, RANKS_PER_LEVEL, LEVEL_SCALE,
-  fishLen, canEat, tierFor, pointsFor, scoreFor, speedAt, makeSpawner, levelFish, hashSeed, levelInfo, nodeId, nodeCost, canBuy, combosFor, computeStats, classUnlocked } = G;
+  fishLen, canEat, tierFor, pointsFor, scoreFor, speedAt, makeSpawner, levelFish, hashSeed, levelInfo, findNode, nodeCost, canBuy, combosFor, computeStats, classUnlocked } = G;
 
 let failed = 0;
 const check = (name, ok, detail = '') => {
@@ -155,27 +155,40 @@ check('schools come in groups', a.filter(x => x.species.group && !x.variant).eve
 }
 
 // ---------- Skill tree ----------
-check('3 branches of 5 nodes', SKILLS.length === 3 && SKILLS.every(b => b.nodes.length === 5));
-check('node n costs n points; everything costs 45', nodeCost(0) === 1 && nodeCost(4) === 5 && SKILLS.length * [0, 1, 2, 3, 4].reduce((t, i) => t + nodeCost(i), 0) === 45);
-check('the first node of a branch is buyable with 1 point', canBuy([], 'fins', 0, 1) && !canBuy([], 'fins', 0, 0));
-check('a node needs the one before it', !canBuy([], 'jaws', 1, 9) && canBuy(['jaws1'], 'jaws', 1, 2));
-check('you can\'t buy a node twice', !canBuy(['scales1'], 'scales', 0, 9));
-check('every combo names real nodes from two branches', COMBOS.every(c => c.needs.length === 2 && c.needs.every(id => SKILLS.some(b => id.startsWith(b.key) && Number(id.slice(b.key.length)) <= 5))
-  && new Set(c.needs.map(id => id.replace(/\d/g, ''))).size === 2));
-const base = computeStats('scamp', []);
-check('a Scamp with no skills has the base stats', base.speed === 1 && base.reach === 1 && base.shields === 0 && base.comboGap === COMBO_GAP && base.comboMax === COMBO_MAX && !base.torpedo);
-const built = computeStats('scamp', ['fins1', 'fins2', 'jaws1', 'jaws2', 'jaws3', 'scales1', 'scales2', 'scales3', 'fins3', 'fins4', 'fins5']);
-check('skills stack from scratch', Math.abs(built.speed - 1.12) < 1e-9 && Math.abs(built.boostRecharge - 0.7) < 1e-9 && built.comboGap === COMBO_GAP + 1 && built.comboMax === COMBO_MAX + 4 && built.shields === 1 && built.torpedo);
-check('combos switch on when both nodes are owned', built.combos.frenzyFuel && built.combos.ghost && built.combos.sharkSkin && !built.combos.hoarder);
-check('the same nodes in any order give the same stats', JSON.stringify(computeStats('dart', ['jaws1', 'fins1'])) === JSON.stringify(computeStats('dart', ['fins1', 'jaws1'])));
+{
+  const [ROW_COST, nodeOpen, skillName] = ['ROW_COST', 'nodeOpen', 'skillName'].map(n => vm.runInThisContext(n));
+  const all = SKILLS.flatMap(b => b.nodes), ids = all.map(n => n.id);
+  check('3 branches of about 10 nodes, every id unique', SKILLS.length === 3 && SKILLS.every(b => b.nodes.length >= 9 && b.nodes.length <= 12) && new Set(ids).size === ids.length);
+  check('each branch has one top node that needs nothing; every other needs nodes in its own branch, one row up', SKILLS.every(b => b.nodes.filter(n => !n.needs.length).length === 1
+    && b.nodes.every(n => n.needs.every(id => { const m = b.nodes.find(k => k.id === id); return m && m.row === n.row - 1; }))));
+  check('paths split and join again (some nodes have two ways in)', SKILLS.every(b => b.nodes.some(n => n.needs.length === 2)));
+  check('no two nodes share a spot, and they fit the 3-column grid', SKILLS.every(b => new Set(b.nodes.map(n => `${n.row}/${n.col}`)).size === b.nodes.length && b.nodes.every(n => [-1, 0, 1].includes(n.col) && ROW_COST[n.row])));
+  const cost = b => b.nodes.reduce((t, n) => t + nodeCost(n), 0), total = SKILLS.reduce((t, b) => t + cost(b), 0);
+  check('a branch costs about 20+ and the whole tree 60+, against about 10 points a world', SKILLS.every(b => cost(b) >= 18) && total >= 60, `${SKILLS.map(cost)} = ${total}`);
+  check('the top node of a branch is buyable with 1 point', canBuy([], 'fastFins', 1) && !canBuy([], 'fastFins', 0));
+  check('a node needs a node joined to it above', !canBuy([], 'quickCharge', 9) && canBuy(['fastFins'], 'quickCharge', 1));
+  check('where paths join, either way in works', canBuy(['fastFins', 'quickCharge'], 'longBoost', 2) && canBuy(['fastFins', 'slipstream'], 'longBoost', 2) && !canBuy(['fastFins'], 'longBoost', 9));
+  check('you can\'t buy a node twice', !canBuy(['camouflage'], 'camouflage', 9));
+  check('cost goes by row', nodeCost(findNode('fastFins')) === 1 && nodeCost(findNode('longBoost')) === 2 && nodeCost(findNode('torpedo')) === 4);
+  check('kept skills count as owned: a skill below one you kept opens', nodeOpen(['spines'], findNode('slippery')) && skillName('spines') === 'Spines');
+  check('every combo names real nodes from two branches', COMBOS.every(c => c.needs.length === 2 && c.needs.every(id => findNode(id)) && new Set(c.needs.map(id => findNode(id).branch.key)).size === 2));
+  const base = computeStats('shark', []);
+  check('a Shark with no skills: base speed, a slightly bigger bite, no shields', base.speed === 1 && base.reach > 1 && base.shields === 0 && base.comboGap === COMBO_GAP && base.comboMax === COMBO_MAX && !base.torpedo && base.boostCharges === 1);
+  const built = computeStats('shark', ['fastFins', 'quickCharge', 'doubleDash', 'bigMouth', 'glutton', 'frenzy', 'camouflage', 'toughSkin', 'spines', 'longBoost', 'afterburn', 'torpedo']);
+  check('skills stack from scratch', Math.abs(built.speed - 1.12) < 1e-9 && Math.abs(built.boostRecharge - 0.7) < 1e-9 && built.comboGap === COMBO_GAP + 1 && built.comboMax === COMBO_MAX + 4 && built.shields === 1 && built.torpedo && built.boostCharges === 2);
+  check('combos switch on when both nodes are owned', built.combos.frenzyFuel && built.combos.ghost && built.combos.sharkSkin && !built.combos.hoarder);
+  check('the same nodes in any order give the same stats', JSON.stringify(computeStats('barracuda', ['bigMouth', 'fastFins'])) === JSON.stringify(computeStats('barracuda', ['fastFins', 'bigMouth'])));
+  check('new powers switch on', computeStats('shark', ['pearlDiver']).pearlMul === 2 && computeStats('shark', ['oysterProof']).oysterProof && computeStats('shark', ['sharpTeeth']).apexDamage === 1 && computeStats('shark', ['regrow']).regrow === 45);
+}
 
-// ---------- Classes ----------
-check('4 classes, only the first open at the start', CLASSES.length === 4 && CLASSES.filter(c => classUnlocked(c, { bestLevel: 0, bestScore: 0 })).length === 1);
-const dart = CLASSES.find(c => c.key === 'dart'), puffy = CLASSES.find(c => c.key === 'puffy'), gob = CLASSES.find(c => c.key === 'gobbler');
-check('Dart opens at level 3, Puffy at level 6, Gobbler at 20,000 points', !classUnlocked(dart, { bestLevel: 2, bestScore: 0 }) && classUnlocked(dart, { bestLevel: 3, bestScore: 0 })
-  && classUnlocked(puffy, { bestLevel: 6, bestScore: 0 }) && !classUnlocked(gob, { bestLevel: 99, bestScore: 19999 }) && classUnlocked(gob, { bestLevel: 0, bestScore: 20000 }));
-check('classes change your stats', computeStats('dart', []).speed === 1.2 && computeStats('puffy', []).shields === 1 && computeStats('gobbler', []).reach === 1.25);
-check('every class\'s free node is a real first node', CLASSES.every(c => !c.free || SKILLS.some(b => c.free === nodeId(b.key, 0))));
+// ---------- Classes: Shark, Barracuda, Orca, Swordfish ----------
+check('4 starters, only the Shark open at the start', CLASSES.map(c => c.key).join() === 'shark,barracuda,orca,swordfish' && CLASSES.filter(c => classUnlocked(c, { bestLevel: 0, bestScore: 0 })).length === 1);
+const cls = k => CLASSES.find(c => c.key === k);
+check('Barracuda at level 3, Orca for beating an apex, Swordfish for opening a portal', !classUnlocked(cls('barracuda'), { bestLevel: 2 }) && classUnlocked(cls('barracuda'), { bestLevel: 3 })
+  && !classUnlocked(cls('orca'), { bestLevel: 99 }) && classUnlocked(cls('orca'), { bestLevel: 0, apexBeaten: true })
+  && !classUnlocked(cls('swordfish'), { bestLevel: 99, apexBeaten: true }) && classUnlocked(cls('swordfish'), { bestLevel: 0, portals: 1 }));
+check('starters play differently', computeStats('barracuda', []).speed === 1.2 && computeStats('orca', []).shields === 1 && computeStats('orca', []).speed < 1 && computeStats('swordfish', []).torpedo && computeStats('swordfish', []).boostSpeed > 1);
+check('every starter\'s free skill is a real top-row skill', CLASSES.every(c => !c.free || findNode(c.free)?.row === 0));
 
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 process.exit(failed ? 1 : 0);

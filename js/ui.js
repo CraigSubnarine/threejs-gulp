@@ -6,7 +6,7 @@ const store = {
   get(key, fallback) { try { return JSON.parse(localStorage.getItem(key)) ?? fallback; } catch { return fallback; } },
   set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} },
 };
-const settings = { sound: true, vibrate: true, cls: 'scamp', ...store.get('gulp-settings', {}) };
+const settings = { sound: true, vibrate: true, cls: 'shark', ...store.get('gulp-settings', {}) };
 const saveSettings = () => store.set('gulp-settings', settings);
 const oldBest = store.get('gulp-best', {}); // step 1 saved "depth"; it's "level" now
 let best = { score: oldBest.score ?? 0, level: oldBest.level ?? oldBest.depth ?? 0 };
@@ -87,7 +87,7 @@ function updateMain() {
 function buildClassPicker() {
   if (!window.game) return;
   const open = unlockedClasses();
-  if (!open.includes(settings.cls)) settings.cls = 'scamp';
+  if (!open.includes(settings.cls)) settings.cls = 'shark'; // also replaces a fish from an older version
   $('classes').replaceChildren(...CLASSES.map(c => {
     const b = document.createElement('button'), locked = !open.includes(c.key);
     b.className = `cls${c.key === settings.cls ? ' sel' : ''}${locked ? ' locked' : ''}`;
@@ -131,50 +131,109 @@ function pauseGame() {
 }
 
 // ---------- The skill tree, between levels ----------
-let treeSel = null; // the node being looked at, e.g. "jaws2"
+// Three dark panels (on a phone held upright: one at a time, picked with tabs), each a web of glowing hexagons joined
+// by lines, under its branch's emblem. Owned nodes glow, ones you could learn have a lit edge, the rest are dim.
+// Icons are tiny hand-drawn SVGs (24 × 24, in the branch's colour).
+const S = 'fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"';
+const GLYPHS = {
+  target: `<g ${S}><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/><path d="M12 1v5M12 18v5M1 12h5M18 12h5"/></g>`,
+  skull: '<path d="M12 2C7 2 3.5 5.5 3.5 10c0 2.6 1.2 4.6 3 5.8V19a1 1 0 0 0 1 1h1.5v-2h2v2h2v-2h2v2h1.5a1 1 0 0 0 1-1v-3.2c1.8-1.2 3-3.2 3-5.8C20.5 5.5 17 2 12 2Zm-3.5 7a2 2 0 1 1 0 4 2 2 0 0 1 0-4Zm7 0a2 2 0 1 1 0 4 2 2 0 0 1 0-4Z"/>',
+  bolt: '<path d="M13.5 1 4 13.5h6.5L9 23l10-13h-6.8z"/>',
+  eye: `<g ${S}><path d="M1.5 12S5.5 5 12 5s10.5 7 10.5 7-4 7-10.5 7S1.5 12 1.5 12Z"/><circle cx="12" cy="12" r="3"/></g>`,
+  shield: '<path d="M12 1.5 3.5 5v6.5c0 5 3.6 9.2 8.5 11 4.9-1.8 8.5-6 8.5-11V5Zm0 3 5.5 2.3v4.7c0 3.4-2.3 6.4-5.5 7.8Z"/>',
+  cloud: '<path d="M7 19a5 5 0 0 1-.6-10A6.5 6.5 0 0 1 19 9.5 4.8 4.8 0 0 1 18 19Z"/><circle cx="5" cy="21.5" r="1.4"/><circle cx="10" cy="22" r="1"/>',
+  shell: '<path d="M12 3C6 3 2 8 2 13.5c0 1 .8 1.5 1.6 1.5h16.8c.8 0 1.6-.5 1.6-1.5C22 8 18 3 12 3Z"/><path d="M5 17h14l-2 3.5H7Z"/>',
+  spikes: '<path d="M12 1 14 7 20 4 17 10 23 12 17 14 20 20 14 17 12 23 10 17 4 20 7 14 1 12 7 10 4 4 10 7Z"/>',
+  rock: '<path d="M4 20 2 13l4-7 7-3 6 3 3 8-3 6Z"/>',
+  drop: '<path d="M12 2S5 10 5 15a7 7 0 0 0 14 0c0-5-7-13-7-13Z"/>',
+  bubble: `<g ${S}><circle cx="12" cy="12" r="9"/><path d="M8 9a4 4 0 0 1 3-3"/></g>`,
+  regrow: `<g ${S}><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 3v5h-5"/></g>`,
+  heart: '<path d="M12 21S2 14.5 2 8.2C2 5 4.4 3 7 3c2 0 3.6 1.1 5 3 1.4-1.9 3-3 5-3 2.6 0 5 2 5 5.2C22 14.5 12 21 12 21Z"/>',
+  mouth: '<path d="M2 8c3-3 17-3 20 0-1 6-5 10-10 10S3 14 2 8Zm4 1.5 1.5 2.5L9 9.8l1.5 2.4L12 10l1.5 2.2L15 9.8l1.5 2.2L18 9.5Z"/>',
+  bowl: '<path d="M2 11h20c0 5.5-4.5 9-10 9S2 16.5 2 11Z"/><path d="M8 3c-1 2 1 3 0 5M12 2c-1 2 1 4 0 6M16 3c-1 2 1 3 0 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+  pearl: '<path d="M2 15c2-6 6-9 10-9s8 3 10 9Z" opacity=".55"/><circle cx="12" cy="13" r="4.5"/>',
+  star: '<path d="m12 1.5 3.2 6.6 7.3 1-5.3 5.1 1.3 7.3L12 18l-6.5 3.5 1.3-7.3L1.5 9.1l7.3-1Z"/>',
+  tooth: '<path d="M5 3c2-1 4 0 7 0s5-1 7 0c2 1.5 1.5 5 .5 7.5S18 21 16 21c-1.5 0-1.5-6-4-6s-2.5 6-4 6c-2 0-2.5-8-3.5-10.5S3 4.5 5 3Z"/>',
+  magnet: '<path d="M4 3h5v9a3 3 0 0 0 6 0V3h5v9a8 8 0 0 1-16 0Z"/><path d="M4 3h5v3H4zM15 3h5v3h-5z" fill="#fff" opacity=".7"/>',
+  jaw: '<path d="M3 4h18l-2 3H5Z"/><path d="M5 9h14l-1 2.5h-1.6l-.9 2-.9-2h-1.7l-.9 2-.9-2H9.4l-.9 2-.9-2H6Z"/><path d="M4 15h16l-3 6H7Z"/>',
+  compass: `<g ${S}><circle cx="12" cy="12" r="9.5"/></g><path d="m15.5 8.5-2 5-5 2 2-5Z"/>`,
+  gem: '<path d="M6 3h12l4 6-10 13L2 9Zm-1.5 6h15L12 19Z"/>',
+  gulp: '<path d="M12 2a10 10 0 1 0 8.7 15L12 12l8.7-5A10 10 0 0 0 12 2Zm-2 5a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Z"/>',
+  fin: '<path d="M2 20C6 9 13 3 22 2c-3 4-4 9-3 18Z"/>',
+  gauge: `<g ${S}><path d="M3 17a9 9 0 1 1 18 0"/><path d="M12 17 16 9"/></g><circle cx="12" cy="17" r="2"/>`,
+  wind: `<g ${S}><path d="M2 8h12a3 3 0 1 0-3-3M2 13h17a3 3 0 1 1-3 3M2 18h8"/></g>`,
+  double: '<path d="M2 4l8 8-8 8Zm9 0 8 8-8 8Z"/>',
+  arrow: '<path d="M2 10h13V4l8 8-8 8v-6H2Z"/>',
+  wave: `<g ${S}><path d="M1 9c3-3 5 3 8 0s5 3 8 0 4-2 6-1M1 16c3-3 5 3 8 0s5 3 8 0 4-2 6-1"/></g>`,
+  flame: '<path d="M12 1c1 4 6 6 6 12a6 6 0 0 1-12 0c0-3 2-5 2-7 1.5 1 2 2.5 2 4 1.5-2 2.5-5 2-9Z"/>',
+  ghost: '<path d="M12 2a8 8 0 0 0-8 8v12l3-2.5L9.5 22l2.5-2.5 2.5 2.5 2.5-2.5L20 22V10a8 8 0 0 0-8-8Zm-3 7a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Zm6 0a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3Z"/>',
+  jet: '<path d="M22 12 12 6v4H6L3 7v10l3-3h6v4Z"/><path d="M1 11h3v2H1z"/>',
+  torpedo: '<path d="M3 9h13c3 0 6 1.5 6 3s-3 3-6 3H3l-2 3V6Z"/>',
+};
+const glyph = name => `<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">${GLYPHS[name] ?? ''}</svg>`; // game data only
+let treeSel = null;          // the node being looked at, e.g. "spines"
+let treeTab = SKILLS[0].key; // which branch shows on a narrow screen
 function openTree() {
   app.state = 'tree';
   treeSel = null;
   drawTree();
   showScreen('tree');
 }
+const ROW_H = 74; // px between rows of hexagons
 function drawTree() {
   const i = game.info, owned = i.owned;
   $('treeTitle').textContent = `LEVEL ${i.level} CLEAR!`;
   $('treePoints').textContent = `${i.points} skill point${i.points === 1 ? '' : 's'} to spend`;
+  $('treeTabs').replaceChildren(...SKILLS.map(br => {
+    const b = document.createElement('button');
+    b.className = `tab${br.key === treeTab ? ' on' : ''}`;
+    b.dataset.tab = br.key;
+    b.style.setProperty('--c', br.color);
+    b.innerHTML = `${glyph(br.emblem)}<span>${br.name}</span>`; // game data only
+    return b;
+  }));
   $('treeGrid').replaceChildren(...SKILLS.map(br => {
-    const col = document.createElement('div');
-    col.className = 'branch';
-    col.style.setProperty('--c', br.color);
-    col.innerHTML = `<h3>${br.name}</h3>`; // game data only
-    br.nodes.forEach((n, k) => {
-      const id = nodeId(br.key, k), b = document.createElement('button'), have = owned.includes(id);
-      const open = !have && (k === 0 || owned.includes(nodeId(br.key, k - 1)));
-      b.className = `node${have ? ' owned' : open ? ' open' : ' locked'}${treeSel === id ? ' sel' : ''}`;
-      b.dataset.node = id;
-      b.innerHTML = `<b>${n.name}</b><small>${have ? '&#10003;' : `${nodeCost(k)} pt${k ? 's' : ''}`}</small>`;
-      col.append(b);
-    });
-    return col;
+    const panel = document.createElement('div'), rows = Math.max(...br.nodes.map(n => n.row)) + 1, H = rows * ROW_H;
+    panel.className = `panel${br.key === treeTab ? ' on' : ''}`;
+    panel.style.setProperty('--c', br.color);
+    // Lines first (behind): from each node up to each node it needs, as an elbow like a circuit.
+    const at = n => ({ x: 50 + n.col * 33, y: n.row * ROW_H + ROW_H / 2 }), lines = [];
+    for (const n of br.nodes) for (const id of n.needs) {
+      const a = at(br.nodes.find(m => m.id === id)), b = at(n), lit = owned.includes(id);
+      const mid = a.y + ROW_H / 2;
+      lines.push(`<path class="${lit ? 'lit' : ''}" d="M${a.x} ${a.y} V${mid} H${b.x} V${b.y}"/>`);
+    }
+    panel.innerHTML = `<div class="emblem">${glyph(br.emblem)}</div><h3>${br.name} <small>${br.blurb}</small></h3>`
+      + `<div class="web" style="height:${H}px"><svg viewBox="0 0 100 ${H}" preserveAspectRatio="none">${lines.join('')}</svg></div>`; // game data only
+    const web = panel.querySelector('.web');
+    for (const n of br.nodes) {
+      const have = owned.includes(n.id), open = !have && nodeOpen(owned, n), p = at(n), b = document.createElement('button');
+      b.className = `hex${have ? ' owned' : open ? ' open' : ' locked'}${treeSel === n.id ? ' sel' : ''}`;
+      b.dataset.node = n.id;
+      b.style.left = `${p.x}%`;
+      b.style.top = `${p.y}px`;
+      b.setAttribute('aria-label', `${n.name}${have ? ', learned' : `, ${nodeCost(n)} point${nodeCost(n) > 1 ? 's' : ''}`}`);
+      b.innerHTML = `<span>${glyph(n.icon)}</span>`; // game data only
+      web.append(b);
+    }
+    return panel;
   }));
   // The selected node's details and whether you can learn it.
-  const sel = treeSel && SKILLS.map(br => br.nodes.map((n, k) => ({ br, n, k }))).flat().find(x => nodeId(x.br.key, x.k) === treeSel);
-  const learn = $('learnBtn');
+  const sel = treeSel && findNode(treeSel), learn = $('learnBtn');
   if (!sel) {
-    $('treeDetail').textContent = 'Tap a skill to see what it does. Each branch unlocks in order, and you can save points for later.';
+    $('treeDetail').textContent = 'Tap a skill to see what it does. Each one opens from any skill joined to it above. Unspent points carry over.';
     learn.hidden = true;
   } else {
-    const have = owned.includes(treeSel), prev = sel.k > 0 && sel.br.nodes[sel.k - 1];
-    const why = have ? 'Learned.' : !canBuy(owned, sel.br.key, sel.k, Infinity) ? `Learn ${prev.name} first.` : i.points < nodeCost(sel.k) ? `Needs ${nodeCost(sel.k)} points.` : '';
-    $('treeDetail').textContent = `${sel.n.name} (${sel.br.name} ${sel.k + 1}): ${sel.n.desc}. ${why}`;
+    const have = owned.includes(sel.id), cost = nodeCost(sel), names = sel.needs.map(skillName);
+    const why = have ? 'Learned.' : !nodeOpen(owned, sel) ? `Learn ${names.join(' or ')} first.` : i.points < cost ? `Needs ${cost} point${cost > 1 ? 's' : ''}.` : '';
+    $('treeDetail').innerHTML = `<b style="color:${sel.branch.color}">${sel.name}</b>: ${sel.desc}. ${why}`; // game data only
     learn.hidden = have;
-    learn.disabled = !canBuy(owned, sel.br.key, sel.k, i.points);
-    learn.textContent = `Learn for ${nodeCost(sel.k)} point${sel.k ? 's' : ''}`;
+    learn.disabled = !canBuy(owned, sel.id, i.points);
+    learn.textContent = `Learn for ${cost} point${cost > 1 ? 's' : ''}`;
   }
-  const name = id => { const b = SKILLS.find(s => id.startsWith(s.key)); return b.nodes[Number(id.slice(b.key.length)) - 1].name; };
   $('treeCombos').innerHTML = '<b>Combos</b> ' + COMBOS.map(c => { // game data only
     const on = c.needs.every(n => owned.includes(n));
-    return `<span class="${on ? 'on' : ''}">${on ? '&#10003; ' : ''}<b>${c.name}</b> (${c.needs.map(name).join(' + ')}): ${c.desc}</span>`;
+    return `<span class="${on ? 'on' : ''}">${on ? '&#10003; ' : ''}<b>${c.name}</b> (${c.needs.map(skillName).join(' + ')}): ${c.desc}</span>`;
   }).join('');
   $('treeNext').classList.toggle('primary', i.points === 0 || !sel);
 }
@@ -249,11 +308,11 @@ $('ui').addEventListener('click', e => {
   if (!btn || !window.game) return;
   if (btn.dataset.cls) return pickClass(btn.dataset.cls);
   if (btn.dataset.keep) return toggleKeep(btn.dataset.keep);
+  if (btn.dataset.tab) { treeTab = btn.dataset.tab; return drawTree(); }
   if (btn.dataset.node) { treeSel = btn.dataset.node; drawTree(); return $('learnBtn').hidden ? null : $('learnBtn').focus({ preventScroll: true }); }
   const action = btn.dataset.action;
   if (action === 'learn' && treeSel) {
-    const b = SKILLS.find(s => treeSel.startsWith(s.key));
-    if (game.buy(b.key, Number(treeSel.slice(b.key.length)) - 1)) jingle([659, 880, 1175], 70);
+    if (game.buy(treeSel)) jingle([659, 880, 1175], 70);
     drawTree();
   } else if (action === 'next') leaveTree();
   else if (action === 'dive') diveIn();
