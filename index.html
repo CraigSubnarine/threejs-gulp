@@ -181,6 +181,32 @@
     #chain, #meterRow, #boss, #perks { max-width: 60%; }
   }
   /* Shard Sense: an arrow at the edge of the screen pointing to the level's shard. */
+  /* Online: the lobby, the in-match scoreboard and kill feed, edge arrows to bubbles and pearls, the results. */
+  #lobbyCode { color: var(--text); letter-spacing: .12em; }
+  #lobbyPlayers, #resultsList { margin: 0; padding: 0 0 0 1.6em; text-align: left; display: flex; flex-direction: column; gap: 4px; }
+  #lobbyPlayers li, #resultsList li { font-weight: 800; }
+  #lobbyPlayers img, #resultsList img { width: 36px; height: 24px; vertical-align: middle; margin-right: 6px; }
+  #lobbyPlayers small, #resultsList small { color: var(--muted); font-weight: 600; }
+  #resultsList li.me { color: var(--deep); }
+  #pvpClasses { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  #lobbySettings { display: flex; flex-direction: column; gap: 6px; }
+  #lobbySettings select:disabled, #lobbySettings input:disabled { opacity: .7; }
+  #pvpCode { font: inherit; font-weight: 800; letter-spacing: .15em; text-transform: uppercase; min-height: 48px; border-radius: 14px; border: 2px solid var(--line); padding: 0 12px; min-width: 0; }
+  #pvpName { font: inherit; font-weight: 800; min-height: 36px; border-radius: 10px; border: 2px solid var(--line); padding: 0 8px; width: 60%; }
+  .isGuest .hostOnly, .isHost .guestOnly { display: none !important; }
+  #pvpHud { position: fixed; z-index: 1; right: max(8px, env(safe-area-inset-right)); top: calc(max(8px, env(safe-area-inset-top)) + 128px); width: min(46vw, 210px); pointer-events: none; color: #fff; text-shadow: 0 2px 2px rgb(0 30 50 / .6); font-size: .8rem; font-weight: 800; }
+  #pvpHud[hidden] { display: none; }
+  #pvpBoard { margin: 0; padding: 4px 8px 4px 2em; background: rgb(0 30 50 / .35); border-radius: 10px; }
+  #pvpBoard .me { color: #ffe066; }
+  #pvpBoard .out { opacity: .55; text-decoration: line-through; }
+  #pvpFeed { margin-top: 6px; display: flex; flex-direction: column; gap: 3px; }
+  #pvpFeed div { background: rgb(0 30 50 / .5); border-radius: 8px; padding: 2px 8px; animation: pop .3s ease-out; }
+  #pvpFeed .soft { color: #bff4ff; }
+  .parrow { position: fixed; left: 0; top: 0; z-index: 1; width: 46px; height: 46px; pointer-events: none; }
+  .parrow[hidden] { display: none; }
+  .parrow i { position: absolute; inset: 0; }
+  .parrow i::after { content: ''; position: absolute; right: -6px; top: 15px; border: 8px solid transparent; border-left: 12px solid var(--c); filter: drop-shadow(0 0 4px var(--c)); }
+  .parrow b { position: absolute; inset: 7px; border-radius: 50%; display: grid; place-items: center; background: var(--c); color: #fff; font-size: 1rem; box-shadow: 0 0 10px var(--c); }
   #shardArrow { position: fixed; left: 0; top: 0; z-index: 1; pointer-events: none; color: #6fe0ff; font-size: 2rem; text-shadow: 0 0 10px #3fc8ff; }
   #boostBtn::after { content: attr(data-n); position: absolute; top: -6px; right: -4px; font-family: "Lilita One", sans-serif; font-size: .95rem; color: #fff; background: var(--deep); border-radius: 10px; padding: 0 6px; }
   #boostBtn:not([data-n])::after, #boostBtn[data-n=""]::after { display: none; }
@@ -218,6 +244,8 @@
 <div id="fade"></div>
 <div id="banner" hidden><b id="bannerTitle"></b><span id="bannerSub"></span></div>
 <div id="pops"></div>
+<div id="pvpArrows"></div>
+<div id="pvpHud" hidden><ol id="pvpBoard"></ol><div id="pvpFeed" aria-live="polite"></div></div>
 <div id="shardArrow" hidden>&#10148;</div>
 <div id="stick" hidden><i id="knob"></i></div>
 
@@ -229,6 +257,7 @@
     <div id="classes"></div>
     <p class="hint" id="classInfo"></p>
     <button class="primary" data-action="play">Play</button>
+    <button data-action="online">Play online (up to 8)</button>
     <div class="pair"><button data-action="board">Leaderboard</button><button data-action="settings">Settings</button></div>
     <button class="signin" data-action="signin" hidden>Sign in with Google</button>
     <p class="hint signin" hidden>Sign in to post your scores and keep your fish unlocked on any device.</p>
@@ -236,6 +265,43 @@
     <div class="pair acct" hidden><button data-action="rename">Change name</button><button data-action="signout">Sign out</button></div>
     <p class="hint acctMsg" hidden></p>
     <a href="../">&larr; Back to Arcade</a>
+  </section>
+
+  <section class="screen" id="online" hidden>
+    <h2>PLAY ONLINE</h2>
+    <p>Up to 8 fish in one sea. Make a room and share its code, or join a friend's.</p>
+    <label class="row">Name <input id="pvpName" maxlength="20" autocomplete="off" spellcheck="false"></label>
+    <button class="primary" data-action="pvp-create">Create a room</button>
+    <div class="pair"><input id="pvpCode" placeholder="CODE" maxlength="5" autocomplete="off" spellcheck="false" autocapitalize="characters" aria-label="Room code"><button data-action="pvp-join">Join</button></div>
+    <p class="hint" id="onlineMsg" aria-live="polite"></p>
+    <button data-action="menu">Back</button>
+  </section>
+
+  <section class="screen wide" id="lobby" hidden>
+    <h2>ROOM <span id="lobbyCode"></span></h2>
+    <button data-action="pvp-copy">Copy the code</button>
+    <ol id="lobbyPlayers"></ol>
+    <div id="pvpClasses"></div>
+    <p class="hint" id="pvpClassInfo"></p>
+    <div id="lobbySettings">
+      <label class="row">Mode <select id="pvpMode"><option value="points">Most Points</option><option value="lfs">Last Fish Standing</option></select></label>
+      <label class="row">Time limit <select id="pvpTime"><option value="0">Off</option><option value="180">3 min</option><option value="300">5 min</option><option value="600">10 min</option></select></label>
+      <label class="row" id="pvpTargetRow">First to <select id="pvpTarget"><option value="10000">10,000</option><option value="25000">25,000</option><option value="50000">50,000</option></select></label>
+      <label class="row">Sea <select id="pvpSea"><option value="reef">Sunny Reef</option><option value="kelp">Kelp Forest</option></select></label>
+      <label class="row">Power-up rain <input type="checkbox" id="pvpRain"></label>
+    </div>
+    <div class="pair hostOnly"><button data-action="pvp-addbot">Add a bot</button><button data-action="pvp-removebot">Remove a bot</button></div>
+    <button class="primary hostOnly" data-action="pvp-start" id="pvpStart">Start</button>
+    <p class="hint guestOnly">Waiting for the host to start...</p>
+    <button data-action="pvp-leave">Leave the room</button>
+  </section>
+
+  <section class="screen" id="results" hidden>
+    <h2 id="resultsTitle">MATCH OVER</h2>
+    <ol id="resultsList"></ol>
+    <button class="primary hostOnly" data-action="pvp-rematch">Rematch</button>
+    <p class="hint guestOnly">Waiting for the host to start a rematch...</p>
+    <button data-action="pvp-leave">Leave the room</button>
   </section>
 
   <section class="screen" id="board" hidden>

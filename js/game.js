@@ -1,7 +1,8 @@
 // Gulp! game: the 3D scene, the camera, the player, the fish and the HUD. Loaded last, as a module. The rules
 // (who eats whom, growth, score, spawns, skills, classes) live in rules.js; this file moves things and draws them.
 import * as THREE from 'three';
-import { makeFish, makeIcons, makeZone, waterAt, makeWarn, bubbleTexture, water, makeOyster, makePickup, makeWreck, makeShard, makePortal, makeLair } from './art.js';
+import { makeFish, makeIcons, makeZone, waterAt, makeWarn, bubbleTexture, water, makeOyster, makePickup, makeWreck, makeShard, makePortal, makeLair, makeBadge, makeAura, makeRing } from './art.js';
+import { createPvp } from './pvp.js';
 
 const FOV = 45, DEG = Math.PI / 180, TAN = Math.tan(FOV / 2 * DEG);
 const MAX_ASPECT = 2.3; // a phone held sideways fills its screen; only very wide screens get side bars
@@ -143,9 +144,9 @@ function updateHud() {
   const combo = G.comboT > 0 && G.combo > 1 ? `×${Math.min(G.combo, G.stats.comboMax)}` : '';
   if (shown.score !== G.score) $('score').textContent = (shown.score = G.score).toLocaleString();
   if (shown.combo !== combo) $('combo').textContent = shown.combo = combo;
-  const where = `${G.world ? `World ${G.world + 1} \u00B7 ` : ''}${G.zone.name} ${G.index + 1}/${LEVELS_PER_ZONE}`;
+  const where = G.pvp ? G.pvp.whereText() : `${G.world ? `World ${G.world + 1} \u00B7 ` : ''}${G.zone.name} ${G.index + 1}/${LEVELS_PER_ZONE}`;
   if (shown.where !== where) $('whereName').textContent = shown.where = where;
-  const fill = `${(G.meter / METER_NEED) * 100}%`;
+  const fill = `${G.pvp ? (P.tier >= PVP.tiers ? 100 : (G.meter % PVP.perTier) / PVP.perTier * 100) : (G.meter / METER_NEED) * 100}%`; // online: progress to your next size
   if (shown.fill !== fill) $('meterFill').style.width = shown.fill = fill;
   if (shown.tier !== P.tier) { shown.tier = P.tier; updateChain(); }
   if (G.apex) { // the apex's health bar
@@ -155,7 +156,7 @@ function updateHud() {
   // Once-per-level powers you still have, so you know what's left.
   const perks = [P.power && `${PICKUPS.kinds[P.power.kind].name.toUpperCase()} ${Math.ceil(P.power.t)}s`, P.shields && `SHIELD ×${P.shields}`, P.gulps && `GULP ×${P.gulps}`, windLeft() && 'SECOND WIND'].filter(Boolean).join(' · ');
   const shards = [...Array(LEVELS_PER_ZONE).keys()].map(i => (G.shards.has(i) ? '\u25C6' : '\u25C7')).join('');
-  const pearls = `\u25C9 ${G.pearls % PEARLS_PER_POINT}/${PEARLS_PER_POINT} \u00B7 ${shards}`; // pearls towards the next bonus skill point, and this world's shards
+  const pearls = G.pvp ? `\u25C9 ${G.pearls} pearls \u00B7 size ${P.tier}/${PVP.tiers}` : `\u25C9 ${G.pearls % PEARLS_PER_POINT}/${PEARLS_PER_POINT} \u00B7 ${shards}`; // pearls towards the next bonus skill point, and this world's shards
   if (shown.pearls !== pearls) $('pearls').textContent = shown.pearls = pearls;
   if (shown.perks !== perks) $('perks').textContent = shown.perks = perks;
   const charge = Math.round(P.charge * 50) / 50; // the boost button fills up like a clock while it recharges
@@ -168,6 +169,7 @@ function updateHud() {
     b.dataset.n = G.stats.boostCharges > 1 ? `\u00D7${Math.floor(charge)}` : ''; // Double Dash: how many are ready
   }
   shardArrow();
+  G.pvp?.hud();
 }
 
 // An arrow at the edge of the screen pointing the way to the level's shard (Shard Sense) or to a lair apex's rock,
@@ -193,11 +195,11 @@ function shardArrow() {
 // screen up) | 'fadeout' | 'fadein' (into the next level).
 const G = { mode: 'menu', phase: 'swim', level: 1, zone: null, index: 0, spot: null, scenery: null, seed: 0, spawner: null, fish: [], t: 0,
   spawnT: 0, phaseT: 0, score: 0, combo: 0, comboT: 0, meter: 0, eatenBy: '', points: 0, owned: [], cls: CLASSES[0], stats: computeStats('shark', []), windUsed: 0,
-  oysters: [], pickup: null, pickT: 0, pickRand: null, pearls: 0, inkT: 0,
+  oysters: [], pickups: [], pickT: 0, pickRand: null, pearls: 0, inkT: 0, pvp: null, // pvp: the online match (js/pvp.js) while one is on
   world: 0, shards: new Set(), worldPearls: 0, wreck: null, shard: null, portal: null, newWorld: false }; // shards: level indexes (0-4) whose shard you have
 
 const P = { obj: null, x: 0, y: 0, vx: 0, vy: 0, len: fishLen(1), tier: 1, face: 1, pulse: 0, safe: 0, alive: false, phase: 0, gulp: 0, boost: 0, charge: 1,
-  stun: 0, shields: 0, gulps: 0, power: null, ghost: 0, regrowT: 0, stingT: 0 }; // power: the timed power-up you have ({ kind, t })
+  stun: 0, shields: 0, gulps: 0, power: null, ghost: 0, regrowT: 0, stingT: 0, aura: null }; // power: the timed power-up you have ({ kind, t })
 G.player = P;
 function setClass(cls) { // a different kind of fish: a new model
   if (P.obj && G.cls === cls) return;
@@ -244,7 +246,7 @@ function startLevel() {
     G.lair = { x: lairX, y: -WORLD.y + 450, holes: lair.holes.map(h => ({ ...h, x: h.x + lairX })) };
   }
   G.shard = null;
-  if (G.mode === 'play' && !G.shards.has(G.index)) { // already found on an earlier lap: no shard this time
+  if (G.mode === 'play' && !G.pvp && !G.shards.has(G.index)) { // already found on an earlier lap: no shard this time (none online)
     const sh = makeShard();
     sh.root.position.set(wreckX + wreck.shard.x, wreck.shard.y, 0);
     G.scenery.group.add(sh.root);
@@ -269,7 +271,7 @@ function startLevel() {
     Object.assign(cam, { x: 0, y: 0, yaw: 0 });
   }
   placeCamera();
-  for (let i = 0; i < 8; i++) spawn(true);
+  if (!G.pvp || G.pvp.isHost) for (let i = 0; i < 8; i++) spawn(true); // online, only the host runs the sea
 }
 function clearFish() {
   for (const f of G.fish) removeFishObj(f);
@@ -287,9 +289,10 @@ function removeFish(f) {
 // A species as it is on this level (with its tier here), by key. It also works for fish outside the level's window.
 const speciesAt = key => G.levelFish.find(s => s.key === key) ?? atLevel(G.zone.fish.find(s => s.key === key), G.index);
 const yawFor = face => (face > 0 ? -0.35 : -Math.PI + 0.35); // turned a little towards the camera, so you see 3D
-function spawnFish(species, x, y, dir, variant = null) {
+let fishIds = 0;
+function spawnFish(species, x, y, dir, variant = null, id = ++fishIds) {
   const tier = species.tier + (variant === 'giant' ? VARIANTS.giant.tier : 0);
-  const f = { s: species, variant, tier, x, y, vx: dir * species.speed, vy: 0, dir, face: dir, len: fishLen(tier) * (species.behavior === 'puff' ? 0.9 : 1),
+  const f = { id, s: species, variant, tier, x, y, vx: dir * species.speed, vy: 0, dir, face: dir, len: fishLen(tier) * (species.behavior === 'puff' ? 0.9 : 1),
     obj: makeFish(species, variant), phase: Math.random() * 6, wob: Math.random() * 6, chase: 0, rest: 0, puff: 0, puffT: -2, warn: null,
     baseTier: tier, stun: 0, shrink: 0, sk: 1, stuck: 0 }; // stun: Shock power-up; shrink: Shrink power-up (one size smaller), sk: its drawn scale
   f.obj.yaw.rotation.y = yawFor(dir);
@@ -298,16 +301,23 @@ function spawnFish(species, x, y, dir, variant = null) {
   G.fish.push(f);
   return f;
 }
-// A new fish (or a school) arrives from just past the left or right edge of the view.
-function spawn(inside = false) {
-  const sp = G.spawner.next(G.mode === 'play' ? P.tier : 2, G.stats.variants), dir = sp.fromLeft ? 1 : -1;
+// The patch of sea around a fish that its player's screen would show (online, the host fills the sea around everyone).
+function rectAround(e) {
+  const hh = VIEW_H[clamp(e.tier, 1, 5)] * 0.55, hw = hh * 1.7;
+  return { x0: e.x - hw, x1: e.x + hw, y0: e.y - hh, y1: e.y + hh };
+}
+// A new fish (or a school) arrives from just past the left or right edge of the view (around: another player's).
+function spawn(inside = false, around = null) {
+  const T = around ?? P, r = around ? rectAround(around) : view;
+  const sp = G.spawner.next(G.mode === 'play' ? clamp(T.tier, 1, 3) : 2, G.stats.variants), dir = sp.fromLeft ? 1 : -1;
   const len = fishLen(sp.species.tier);
-  let x0 = dir > 0 ? view.x0 - 80 - len : view.x1 + 80 + len;
+  let x0 = dir > 0 ? r.x0 - 80 - len : r.x1 + 80 + len;
   if (inside) { // filling the sea at the start of a level: anywhere in view, but not on top of you
-    x0 = view.x0 + G.spawner.rand() * (view.x1 - view.x0);
-    if (G.mode === 'play' && Math.abs(x0 - P.x) < 320) x0 = P.x + Math.sign(x0 - P.x || 1) * 320;
+    x0 = r.x0 + G.spawner.rand() * (r.x1 - r.x0);
+    if (G.mode === 'play' && Math.abs(x0 - T.x) < 320) x0 = T.x + Math.sign(x0 - T.x || 1) * 320;
   }
-  const y0 = clamp((view.y0 + view.y1) / 2 + sp.y * (view.y1 - view.y0) / 2 * 0.85, -WORLD.y + 80, WORLD.y - 80);
+  x0 = clamp(x0, -WORLD.x - 600, WORLD.x + 600);
+  const y0 = clamp((r.y0 + r.y1) / 2 + sp.y * (r.y1 - r.y0) / 2 * 0.85, -WORLD.y + 80, WORLD.y - 80);
   for (let i = 0; i < sp.count; i++) spawnFish(sp.species, x0 - dir * Math.random() * 160, clamp(y0 + (Math.random() - 0.5) * 140, -WORLD.y + 40, WORLD.y - 40), dir, sp.variant);
 }
 
@@ -404,13 +414,32 @@ function updatePlayer(dt) {
   }
   P.obj.root.scale.setScalar(Math.max(scale, 0.001));
   P.obj.root.visible = P.safe > 0 && P.safe < 50 && P.alive ? G.t * 8 % 2 < 1.5 : true; // blink while nothing can eat you
+  if (G.pvp?.out) P.obj.root.visible = false; // out of a Last Fish Standing match: watching
+  indicate(P, { shield: P.shields > 0, rush: P.power?.kind === 'rush' || P.boost > 0 && P.power?.kind === 'rush' });
+}
+// Power-up indicators on a fish (yours, other players', sea fish): a bubble for a shield, a blue glow for Rush,
+// purple for a shrunk fish, sparks over a stunned one. Built the first time one is needed.
+function indicate(e, { shield = false, rush = false, shrink = false, stun = false }) {
+  if (!e.aura) {
+    if (!shield && !rush && !shrink && !stun) return;
+    e.aura = makeAura();
+    e.obj.root.add(e.aura.group);
+  }
+  const a = e.aura, pulse = 0.5 + Math.sin(G.t * 6) * 0.5;
+  a.shield.visible = shield;
+  a.rush.visible = rush;
+  a.rush.material.opacity = 0.25 + pulse * 0.25;
+  a.shrink.visible = shrink;
+  a.spark.visible = stun && G.t * 5 % 1 < 0.7;
+  if (rush && Math.random() < 0.5) burst(e.x - (e.face ?? 1) * e.len * 0.5, e.y, 1, 40);
 }
 
 function updateFish(f, dt) {
-  const s = f.s, live = G.mode === 'play' && P.alive && G.phase === 'swim', mult = speedAt(G.level) * (f.variant === 'speedy' ? VARIANTS.speedy.speed : 1);
+  const T = G.pvp ? G.pvp.nearest(f) ?? P : P; // online: whichever player is nearest
+  const s = f.s, live = G.mode === 'play' && T.alive && G.phase === 'swim', mult = speedAt(G.level) * (f.variant === 'speedy' ? VARIANTS.speedy.speed : 1);
   const sp = s.speed * mult;
   let tx = f.dir * sp, ty = Math.sin(G.t * 0.8 + f.wob) * sp * 0.25, rate = 2.5;
-  const dx = P.x - f.x, dy = P.y - f.y, d = Math.hypot(dx, dy) || 1;
+  const dx = T.x - f.x, dy = T.y - f.y, d = Math.hypot(dx, dy) || 1;
   if (f.shrink > 0) f.shrink -= dt;
   if (f.stun > 0) f.stun -= dt;
   const stunned = f.stun > 0, small = f.shrink > 0 ? 2 : 0;
@@ -418,7 +447,7 @@ function updateFish(f, dt) {
   if (s.behavior === 'jelly') return driftJelly(f, dt, s.speed * speedAt(G.level));
   if (s.behavior === 'puff') { // swells up (and becomes dangerous) when you swim close, then slowly shrinks
     f.puffT -= dt;
-    if (live && f.puffT <= -1.5 && d < 200 + P.len * 0.5) { f.puffT = 2.6; beep(220, 160, 0.04, 'sine', 2); }
+    if (live && f.puffT <= -1.5 && d < 200 + T.len * 0.5) { f.puffT = 2.6; if (T === P) beep(220, 160, 0.04, 'sine', 2); }
     const want = f.puffT > 0.5 ? 1 : 0;
     f.puff += (want - f.puff) * Math.min(1, dt * (want ? 9 : 3));
     f.tier = f.puff > 0.5 && !G.stats.ironJaw ? s.puffTo : s.tier; // Iron Jaw: still food when puffed up
@@ -428,7 +457,7 @@ function updateFish(f, dt) {
   }
   const flees = s.behavior === 'skittish' || s.behavior === 'school' || f.variant === 'speedy';
   const clearOff = ['widen', 'apex', 'apexdown', 'portal'].includes(G.phase); // everyone leaves while the camera widens or the apex is here
-  if ((live && flees && !stunned && canEat(P, f) && d < TUNING.fleeRange * (f.variant === 'speedy' ? 1.5 : 1)) || clearOff) {
+  if ((live && flees && !stunned && canEat(T, f) && d < TUNING.fleeRange * (f.variant === 'speedy' ? 1.5 : 1)) || clearOff) {
     tx = -dx / d * sp * 1.7; // swim away from you
     ty = -dy / d * sp * 1.7;
     rate = 5;
@@ -437,16 +466,16 @@ function updateFish(f, dt) {
   if (s.behavior === 'hunter' && stunned) f.chase = 0;
   else if (s.behavior === 'hunter') {
     f.rest -= dt;
-    const ghosted = (G.stats.combos.ghost && P.boost > 0) || P.ghost > 0; // Ghost combo / Ghost Fin: boosting shakes off hunters
-    const still = G.stats.mimic && Math.hypot(P.vx, P.vy) < 40; // Mimic: hold still and they take you for a rock
-    if (f.chase > 0 && live && canEat(f, P) && !ghosted) {
+    const ghosted = (G.stats.combos.ghost && T.boost > 0) || T.ghost > 0; // Ghost combo / Ghost Fin: boosting shakes off hunters
+    const still = G.stats.mimic && Math.hypot(T.vx, T.vy) < 40; // Mimic: hold still and they take you for a rock
+    if (f.chase > 0 && live && canEat(f, T) && !ghosted) {
       f.chase -= dt;
       const cs = Math.min(TUNING.chaseSpeed * speedAt(G.level), 0.95) * PLAYER.speed;
       tx = dx / d * cs;
       ty = dy / d * cs;
       rate = 4;
       if (f.chase <= 0) { f.rest = TUNING.chaseRest; f.dir = Math.sign(f.vx) || f.dir; }
-    } else if (live && !ghosted && !still && canEat(f, P) && f.rest <= 0 && d < TUNING.chaseRange * G.stats.notice && P.safe <= 0) {
+    } else if (live && !ghosted && !still && canEat(f, T) && f.rest <= 0 && d < TUNING.chaseRange * G.stats.notice && T.safe <= 0) {
       if (G.stats.ink && G.inkT <= 0) { // Ink Cloud: a puff of ink and it loses you
         G.inkT = 10;
         f.rest = TUNING.chaseRest * 2;
@@ -454,7 +483,7 @@ function updateFish(f, dt) {
         burst(P.x, P.y, 16, 120);
       } else {
         f.chase = TUNING.chaseTime * G.stats.chase;
-        beep(880, 90, 0.04, 'square');
+        if (T === P) beep(880, 90, 0.04, 'square');
         if (!f.warn) scene.add(f.warn = makeWarn());
       }
     } else f.chase = 0;
@@ -480,6 +509,7 @@ function updateFish(f, dt) {
   if (stunned) f.obj.pitch.rotation.x = 1.3; // rolled on its side
   f.sk += ((small ? 0.55 : 1) - f.sk) * Math.min(1, dt * 6);
   f.obj.root.scale.setScalar(f.len * (1 + 0.7 * f.puff) * f.sk);
+  indicate(f, { shrink: small > 0, stun: stunned });
   if (f.warn) {
     f.warn.visible = f.chase > TUNING.chaseTime * G.stats.chase - 1.2; // shows for the first moment of a chase
     f.warn.position.set(f.x, f.y + f.len * 0.5 + 40, 20);
@@ -516,17 +546,20 @@ function sting(f) {
 }
 
 // Boosting into a cracked pillar smashes the whole pillar: its rocks burst apart and the way is open.
-function smash(id) {
+function smash(id, remote = false) {
   const parts = G.circles.filter(c => c.crack === id);
+  if (!parts.length) return;
+  if (!remote) G.pvp?.smashed(id);
   G.circles = G.circles.filter(c => c.crack !== id);
   for (const c of parts) {
     c.mesh.visible = false;
     burst(c.x, c.y, 10, c.r * 1.5);
   }
+  boom(500, remote ? 0.05 : 0.14);
+  if (remote) return;
   const pts = 50 * G.level;
   G.score += pts;
   popup(`SMASH! +${pts}`, P.x, P.y + P.len, 'combo');
-  boom(500, 0.14);
   beep(110, 260, 0.08, 'sawtooth', 0.5);
   buzz(120);
 }
@@ -566,6 +599,7 @@ function bitten(f) {
 }
 function eat(f) {
   removeFish(f);
+  G.pvp?.ateFish(f); // online: tell the host (it takes the fish out of everyone's sea)
   const V = VARIANTS, st = G.stats, v = f.variant;
   G.combo = G.comboT > 0 ? G.combo + 1 : 1;
   G.comboT = st.comboGap;
@@ -581,7 +615,7 @@ function eat(f) {
   if (v === 'golden' && st.combos.hoarder) P.shields = Math.min(P.shields + 1, st.shields);
   if (P.boost > 0 && st.refund) P.charge = Math.min(st.boostCharges, P.charge + st.refund);
   if (st.combos.frenzyFuel && G.combo % 5 === 0) { P.charge = st.boostCharges; popup('FRENZY!', P.x, P.y + P.len, 'combo'); }
-  G.meter = Math.min(METER_NEED, G.meter + grow);
+  G.meter = G.pvp ? G.meter + grow : Math.min(METER_NEED, G.meter + grow); // online: sizes 1-5, no level clear
   const tag = v === 'golden' ? ' GOLD!' : '';
   popup(mult > 1 ? `+${pts} ×${mult}${tag}` : `+${pts}`, f.x, f.y + f.len * 0.4, v === 'golden' ? 'gold' : G.combo > 1 ? 'combo' : '');
   burst(f.x, f.y, 6 + Math.min(f.tier, 3) * 4);
@@ -589,6 +623,7 @@ function eat(f) {
   beep(380 + Math.min(f.tier, 3) * 140 + Math.min(G.combo, COMBO_MAX) * 40, 70, 0.06, 'square', 0.5);
   if (v === 'golden') jingle([1319, 1568, 2093], 60);
   buzz(15);
+  if (G.pvp) return G.pvp.grown();
   if (G.meter >= METER_NEED) return G.index === LEVELS_PER_ZONE - 1 ? startApex() : levelCleared(); // a zone's last level ends with its apex
   const t = tierFor(G.meter);
   if (t > P.tier) {
@@ -601,6 +636,7 @@ function eat(f) {
   }
 }
 function die(f) {
+  if (G.pvp) return G.pvp.died((f.variant ? `${VARIANTS[f.variant].name.toLowerCase()} ` : '') + f.s.name, f);
   P.alive = false;
   P.gulp = 0;
   G.phase = 'dying';
@@ -657,7 +693,8 @@ function updateOysters(dt, live) {
     o.mode = mode;
   }
 }
-function takePearl(o) {
+function takePearl(o, granted = false) {
+  if (G.pvp && !granted && !G.pvp.claimPearl(o)) return; // online: the host decides who got it first
   o.has = false;
   o.regrow = OYSTER.regrow;
   const n = pearlCount(o.black) * (G.stats.pearlMul ?? 1), pts = pearlPoints(o.black, G.level), before = Math.floor(G.pearls / PEARLS_PER_POINT);
@@ -668,7 +705,7 @@ function takePearl(o) {
   burst(o.x, o.y + OYSTER.size * 0.3, 14, 150);
   jingle(o.black ? [988, 1319, 1568, 2093] : [1319, 1760], 70);
   buzz(20);
-  const gained = Math.floor(G.pearls / PEARLS_PER_POINT) - before;
+  const gained = G.pvp ? 0 : Math.floor(G.pearls / PEARLS_PER_POINT) - before; // no skill points online
   if (gained > 0) { // every few pearls: a bonus skill point
     G.points += gained;
     popup(`+${gained} SKILL POINT${gained > 1 ? 'S' : ''}`, P.x, P.y + P.len * 1.4, 'combo');
@@ -685,53 +722,90 @@ function snapOn(o) {
 }
 
 // ---------- Power-ups ----------
-// A bubble drifts down from the top of the view now and then; swim into it to take it.
-function spawnPickup(kind, x, y) {
-  removePickup();
-  const r = G.pickRand ?? Math.random;
-  x ??= clamp(P.x + (r() - 0.5) * 0.7 * (view.x1 - view.x0), -WORLD.x + 200, WORLD.x - 200);
-  y ??= Math.min(view.y1 - 60, WORLD.y - 80);
+// A bubble drifts down from the top of the view now and then; swim into it to take it. Online, the host drops them
+// (near a random player) and decides who got each one; Power-up rain drops more, several at once.
+let pickupIds = 0;
+function spawnPickup(kind, x, y, id = ++pickupIds) {
+  const near = G.pvp?.randomPlayer() ?? P, r = G.pickRand ?? Math.random;
+  if (!G.pvp) removePickup();
+  x ??= clamp(near.x + (r() - 0.5) * 0.7 * (view.x1 - view.x0), -WORLD.x + 200, WORLD.x - 200);
+  y ??= Math.min(near.y + (view.y1 - view.y0) * 0.45, WORLD.y - 80);
   const obj = makePickup(kind);
   obj.position.set(x, y, 0);
   scene.add(obj);
-  G.pickup = { kind, x, y, t: PICKUPS.life, obj };
-  return G.pickup;
+  const p = { id, kind, x, y, tx: x, ty: y, t: PICKUPS.life, obj };
+  G.pickups.push(p);
+  return p;
 }
-function removePickup() {
-  if (G.pickup) scene.remove(G.pickup.obj);
-  G.pickup = null;
+// Removes one bubble, or all of them.
+function removePickup(p = null) {
+  for (const q of p ? [p] : G.pickups) scene.remove(q.obj);
+  G.pickups = p ? G.pickups.filter(q => q !== p) : [];
 }
 function updatePickup(dt) {
-  if (G.phase === 'swim' && !G.pickup && (G.pickT -= dt) <= 0) {
-    G.pickT = PICKUPS.every;
+  const host = !G.pvp || G.pvp.isHost, rain = G.pvp?.rain ? PVP.rain : 1;
+  if (host && G.phase === 'swim' && G.pickups.length < rain && (G.pickT -= dt) <= 0) {
+    G.pickT = PICKUPS.every / rain;
     spawnPickup(rollPickup(G.pickRand));
   }
-  const p = G.pickup;
-  if (!p) return;
-  p.t -= dt;
-  p.y -= PICKUPS.fall * dt;
-  p.x += Math.sin(G.t * 1.3) * 25 * dt;
-  const pd = Math.hypot(P.x - p.x, P.y - p.y);
-  if (G.stats.magnet && pd < 700 && pd > 1) { p.x += (P.x - p.x) / pd * 320 * dt; p.y += (P.y - p.y) / pd * 320 * dt; } // Magnet
-  p.obj.position.set(p.x, p.y, 0);
-  p.obj.visible = p.t > 2 || G.t * 6 % 1 < 0.6; // blinks before it pops
-  if (p.t <= 0 || p.y < -WORLD.y + 40) { burst(p.x, p.y, 10, 100); removePickup(); return; }
-  if (P.alive && G.phase === 'swim' && Math.hypot(P.x - p.x, P.y - p.y) < P.len * 0.35 + 48) takePickup(p);
+  for (const p of [...G.pickups]) {
+    if (host) {
+      p.t -= dt;
+      p.y -= PICKUPS.fall * dt;
+      p.x += Math.sin(G.t * 1.3 + p.id) * 25 * dt;
+      const pd = Math.hypot(P.x - p.x, P.y - p.y);
+      if (G.stats.magnet && pd < 700 && pd > 1) { p.x += (P.x - p.x) / pd * 320 * dt; p.y += (P.y - p.y) / pd * 320 * dt; } // Magnet
+      if (p.t <= 0 || p.y < -WORLD.y + 40) { burst(p.x, p.y, 10, 100); removePickup(p); G.pvp?.pickupGone(p); continue; }
+    } else { // a guest: glide towards where the host says it is
+      p.x += (p.tx - p.x) * Math.min(1, dt * 8);
+      p.y += (p.ty - p.y) * Math.min(1, dt * 8);
+    }
+    p.obj.position.set(p.x, p.y, 0);
+    p.obj.visible = p.t > 2 || G.t * 6 % 1 < 0.6; // blinks before it pops
+    if (P.alive && G.phase === 'swim' && Math.hypot(P.x - p.x, P.y - p.y) < P.len * 0.35 + 48) {
+      if (G.pvp) G.pvp.claimPickup(p); else takePickup(p);
+    }
+  }
 }
+// You took a bubble: its power is yours (and Shock and Shrink hit the sea around you).
 function takePickup(p) {
   const k = PICKUPS.kinds[p.kind];
-  removePickup();
+  removePickup(p);
   popup(k.name.toUpperCase(), P.x, P.y + P.len, 'combo');
   jingle([784, 1047, 1319], 60);
   burst(P.x, P.y, 18, 220);
   buzz(40);
   if (k.time) P.power = { kind: p.kind, t: k.time };
-  if (p.kind === 'shock') { // fish near you go limp
+  if (p.kind === 'shield') P.shields++;
+  if (!G.pvp) pickupWorld(p.kind, P);
+}
+// Shock and Shrink: their effect on the sea around whoever took them (online, the host runs this).
+function pickupWorld(kind, who) {
+  const k = PICKUPS.kinds[kind];
+  if (kind === 'shock') { // fish near you go limp
     boom(300, 0.08);
-    for (const f of G.fish) if (Math.hypot(f.x - P.x, f.y - P.y) < k.range) { f.stun = k.time; f.chase = 0; f.rest = Math.max(f.rest, k.time); }
-  } else if (p.kind === 'shrink') { // fish one size bigger than you shrink into food
-    for (const f of G.fish) if (f.baseTier === P.tier + 1 && f.s.behavior !== 'puff' && f.x > view.x0 - 200 && f.x < view.x1 + 200) f.shrink = k.time;
-  } else if (p.kind === 'shield') P.shields++;
+    ring(who.x, who.y, k.range, 0xffd23b);
+    for (const f of G.fish) if (Math.hypot(f.x - who.x, f.y - who.y) < k.range) { f.stun = k.time; f.chase = 0; f.rest = Math.max(f.rest, k.time); }
+  } else if (kind === 'shrink') { // fish one size bigger than you shrink into food
+    ring(who.x, who.y, 700, 0xb36bff);
+    for (const f of G.fish) if (f.baseTier === clamp(who.tier, 1, 3) + 1 && f.s.behavior !== 'puff' && Math.abs(f.x - who.x) < 1400) f.shrink = k.time;
+  }
+}
+// An expanding ring (Shock's jolt, Shrink's wave), fading as it grows.
+const rings = [];
+function ring(x, y, r, color) {
+  const m = makeRing(color);
+  m.position.set(x, y, 10);
+  scene.add(m);
+  rings.push({ m, r, t: 0 });
+}
+function updateRings(dt) {
+  for (const g of [...rings]) {
+    g.t += dt * 2;
+    g.m.scale.setScalar(Math.max(1, g.r * g.t));
+    g.m.material.opacity = Math.max(0, 0.8 * (1 - g.t));
+    if (g.t >= 1) { scene.remove(g.m); rings.splice(rings.indexOf(g), 1); }
+  }
 }
 
 // ---------- Between levels ----------
@@ -1114,7 +1188,8 @@ function update(dt) {
   const play = G.mode === 'play';
   if (play) updatePlayer(dt);
   else Object.assign(cam, { x: Math.sin(G.t * 0.06) * 900, y: -380 + Math.sin(G.t * 0.11) * 120, dist: camDist(VIEW_H[2]), yaw: Math.sin(G.t * 0.09) * CAMERA.sway * DEG });
-  for (const f of [...G.fish]) updateFish(f, dt);
+  if (!G.pvp || G.pvp.isHost) for (const f of [...G.fish]) updateFish(f, dt); // online guests get the sea from the host
+  G.pvp?.update(dt);
   if (G.apex) updateApex(dt);
   if (play && P.alive && G.phase === 'swim') collide();
   updateOysters(dt, play && P.alive && G.phase === 'swim');
@@ -1125,18 +1200,22 @@ function update(dt) {
     const k = Math.min(1, dt * 4), widen = G.phase === 'widen' || G.phase === 'fadeout', fight = G.phase === 'apex' || G.phase === 'apexdown';
     // Between levels it only pulls back a little; after the cut the new level carries on easing out (it's rescaled, so
     // on screen you stay the same size). The Zoom setting scales every view.
-    const viewTo = (widen ? VIEW_H[3] * CAMERA.widen : fight ? VIEW_H[3] * APEX.view : VIEW_H[P.tier]) * zoomMul();
+    const C = G.pvp?.watching() ?? P; // out of an online match: watch another player
+    const viewTo = (widen ? VIEW_H[3] * CAMERA.widen : fight ? VIEW_H[3] * APEX.view : VIEW_H[clamp(C.tier, 1, 5)]) * zoomMul();
     cam.dist += (camDist(viewTo) - cam.dist) * Math.min(1, dt * (widen ? 2.6 : 2));
     const hw = (view.x1 - view.x0) / 2, below = cam.y - view.y0, above = view.y1 - cam.y, lim = widen ? Infinity : 1;
-    cam.x += (clampMid(P.x + P.vx * CAMERA.lead, -WORLD.x * lim - 100 + hw, WORLD.x * lim + 100 - hw) - cam.x) * k;
-    cam.y += (clampMid(P.y + P.vy * CAMERA.lead, -WORLD.y * lim - 160 + below, WORLD.y * lim + (view.y1 - view.y0) * 0.2 - above) - cam.y) * k; // room above the surface for the HUD, so you're never under it
-    cam.yaw += (-P.vx / PLAYER.speed * CAMERA.sway * DEG - cam.yaw) * Math.min(1, dt * 1.5);
+    cam.x += (clampMid(C.x + C.vx * CAMERA.lead, -WORLD.x * lim - 100 + hw, WORLD.x * lim + 100 - hw) - cam.x) * k;
+    cam.y += (clampMid(C.y + C.vy * CAMERA.lead, -WORLD.y * lim - 160 + below, WORLD.y * lim + (view.y1 - view.y0) * 0.2 - above) - cam.y) * k; // room above the surface for the HUD, so you're never under it
+    cam.yaw += (-C.vx / PLAYER.speed * CAMERA.sway * DEG - cam.yaw) * Math.min(1, dt * 1.5);
   }
   placeCamera();
   // Fish leave when they're far off screen; new ones arrive while the sea is below its population.
-  for (const f of [...G.fish]) if (f.x < view.x0 - 900 || f.x > view.x1 + 900 || f.y < view.y0 - 900 || f.y > view.y1 + 900) removeFish(f);
-  G.spawnT -= dt;
-  if (G.spawnT <= 0 && G.fish.length < TUNING.population && ['swim', 'dying', 'fadein'].includes(G.phase)) { spawn(); G.spawnT = TUNING.spawnEvery; }
+  if (G.pvp) G.pvp.tendSea(dt); // online: the host keeps fish around every player
+  else {
+    for (const f of [...G.fish]) if (f.x < view.x0 - 900 || f.x > view.x1 + 900 || f.y < view.y0 - 900 || f.y > view.y1 + 900) removeFish(f);
+    G.spawnT -= dt;
+    if (G.spawnT <= 0 && G.fish.length < TUNING.population && ['swim', 'dying', 'fadein'].includes(G.phase)) { spawn(); G.spawnT = TUNING.spawnEvery; }
+  }
   G.comboT -= dt;
   G.inkT -= dt;
   if (G.phaseT > 0 && (G.phaseT -= dt) <= 0) {
@@ -1157,9 +1236,30 @@ function update(dt) {
   water.uTime.value = G.t;
   G.scenery.update(dt, camera);
   updateFx(dt);
+  updateRings(dt);
   if (play) updateHud();
 }
 function render() { renderer.render(scene, camera); }
+
+// ---------- Online matches (js/pvp.js) ----------
+// Starts a match level: one level of the chosen sea, sizes 1-5, no shards, no skill tree.
+function startPvpLevel(m) {
+  setClass(CLASSES.find(c => c.key === m.cls) ?? CLASSES[0]);
+  Object.assign(G, { mode: 'play', seed: m.seed, level: 1, world: m.world, score: 0, combo: 0, comboT: 0, points: 0, windUsed: 0, pearls: 0, shards: new Set(), worldPearls: 0, newWorld: false, owned: [], pvp: m.pvp });
+  G.stats = computeStats(G.cls.key, [], true);
+  Object.assign(P, { alive: true, gulp: 0, len: fishLen(1), pulse: 0, face: 1, boost: 0, charge: G.stats.boostCharges, ghost: 0, regrowT: 0 });
+  P.obj.root.visible = true;
+  cam.dist = camDist(VIEW_H[1] * zoomMul());
+  shown = {};
+  startLevel();
+  Object.assign(P, { x: m.x, y: m.y, safe: PVP.countdown + 1 });
+  Object.assign(cam, { x: m.x, y: m.y });
+  placeCamera();
+  updateHud();
+}
+const pvp = createPvp({ THREE, G, P, scene, cam, camera, icons, makeFish, classSpec, spawnFish, removeFish, speciesAt, spawn, rectAround, spawnPickup, removePickup,
+  takePickup, takePearl, pickupWorld, smash, burst, popup, banner, ring, indicate, pose, startPvpLevel, makeBadge, view: () => view, screen: () => ({ w: viewW, h: viewH, left: viewLeft }),
+  toMenu: () => toMenu() });
 
 // ---------- Called by the menus (ui.js) ----------
 function startRun(seed = Math.floor(Math.random() * 1e9), classKey = 'shark') {
@@ -1177,6 +1277,8 @@ ${shardNote()}`, 2600);
   jingle([392, 523, 659], 110);
 }
 function toMenu() {
+  G.pvp?.end();
+  G.pvp = null;
   G.mode = 'menu';
   P.alive = false;
   P.obj.root.visible = false;
@@ -1192,7 +1294,7 @@ function toMenu() {
 let last = 0;
 window.game = {
   manual: false, // the playtest sets this and steps the game itself
-  startRun, toMenu, update, render, spawnFish, speciesAt, boost, nextLevel, buy, spawnPickup, enterWorld, G, cam, camera, icons,
+  startRun, toMenu, update, render, spawnFish, speciesAt, boost, nextLevel, buy, spawnPickup, enterWorld, pvp, G, cam, camera, icons,
   get info() { return { score: G.score, level: G.level, world: G.world, shards: G.shards.size, worldPearls: G.worldPearls, zone: G.zone.name, index: G.index, spot: G.spot.name, tier: P.tier, points: G.points, owned: G.owned, stats: G.stats, free: G.cls.free }; },
 };
 addEventListener('resize', resize);
@@ -1202,7 +1304,7 @@ gameReady();
 renderer.setAnimationLoop(now => {
   const dt = Math.min((now - last) / 1000, 0.05);
   last = now;
-  if (game.manual || !['menu', 'playing', 'over'].includes(app.state)) return; // paused or on the skill tree: the last frame stays up
+  if (game.manual || (!['menu', 'playing', 'over', 'online', 'lobby'].includes(app.state) && !G.pvp)) return; // paused or on the skill tree: the last frame stays up (online the match never pauses)
   update(dt);
   render();
 });

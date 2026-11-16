@@ -117,6 +117,7 @@ function startRun() {
   document.activeElement?.blur();
 }
 function toMenu() {
+  if (window.game?.pvp.room) game.pvp.leave(); // leaving an online room
   app.state = 'menu';
   window.game?.toMenu();
   updateMain();
@@ -126,9 +127,93 @@ function pauseGame() {
   if (app.state !== 'playing') return;
   app.state = 'paused';
   const i = game.info;
+  if (game.pvp.match) { $('pauseInfo').textContent = 'The match carries on while you look at this. Main menu leaves the room.'; return showScreen('pause'); }
   $('pauseInfo').textContent = `World ${i.world + 1} · ${i.zone} ${i.index + 1}/${LEVELS_PER_ZONE} (level ${i.level}) · ${i.shards}/${LEVELS_PER_ZONE} shards · score ${i.score.toLocaleString()}`;
   showScreen('pause');
 }
+
+// ---------- Online (js/pvp.js runs the rooms and matches) ----------
+const pvpNameDefault = () => account.name ?? store.get('gulp-pvp-name', null) ?? `Player-${Math.floor(1000 + Math.random() * 9000)}`;
+function openOnline(msg = '') {
+  app.state = 'online';
+  $('pvpName').value = pvpNameDefault();
+  $('onlineMsg').textContent = msg;
+  showScreen('online');
+}
+async function goOnline(join) {
+  const name = $('pvpName').value.trim(), code = $('pvpCode').value;
+  if (!NAME_RULE.test(name)) { $('onlineMsg').textContent = 'Pick a name: 3-20 letters, numbers, spaces, - _ or .'; return; }
+  if (join && code.replace(/[^a-z0-9]/gi, '').length !== 5) { $('onlineMsg').textContent = 'Type the 5-letter room code.'; return; }
+  store.set('gulp-pvp-name', name);
+  $('onlineMsg').textContent = join ? 'Joining...' : 'Making a room...';
+  try {
+    await (join ? game.pvp.join(code, name, settings.pvpCls ?? 'shark') : game.pvp.create(name, settings.pvpCls ?? 'shark'));
+    app.state = 'lobby';
+    pvpUi.lobby(game.pvp.state, true);
+  } catch (e) { $('onlineMsg').textContent = e.message || "Couldn't reach the room."; }
+}
+// Called by pvp.js.
+const pvpUi = {
+  lobby(st, open = false) {
+    if (open) { app.state = 'lobby'; showScreen('lobby'); }
+    if (app.state !== 'lobby') return;
+    $('lobby').classList.toggle('isHost', !!st.host);
+    $('lobby').classList.toggle('isGuest', !st.host);
+    $('lobbyCode').textContent = st.code;
+    $('lobbyPlayers').replaceChildren(...st.players.map(p => {
+      const li = document.createElement('li'), img = document.createElement('img'), tag = document.createElement('small');
+      img.src = game.icons[`class-${p.cls}`]; img.alt = '';
+      tag.textContent = [p.host && ' host', p.bot && ' bot', p.id === st.me && ' you'].filter(Boolean).join(' \u00B7');
+      li.append(img, p.name, tag); // names are player input: text only
+      return li;
+    }));
+    const mine = st.players.find(p => p.id === st.me)?.cls ?? settings.pvpCls ?? 'shark';
+    $('pvpClasses').replaceChildren(...CLASSES.map(c => {
+      const b = document.createElement('button');
+      b.className = `cls${c.key === mine ? ' sel' : ''}`;
+      b.dataset.pvpcls = c.key;
+      b.innerHTML = `<img src="${game.icons[`class-${c.key}`]}" alt=""><span>${c.name}</span>`; // game data only
+      return b;
+    }));
+    const c = CLASSES.find(k => k.key === mine);
+    $('pvpClassInfo').textContent = `${c.name} (online): ${c.pvp.desc}`;
+    const s = st.settings;
+    $('pvpMode').value = s.mode; $('pvpTime').value = String(s.time); $('pvpTarget').value = String(s.target); $('pvpSea').value = s.sea; $('pvpRain').checked = !!s.rain;
+    $('pvpTargetRow').hidden = !(s.mode === 'points' && !s.time);
+    for (const id of ['pvpMode', 'pvpTime', 'pvpTarget', 'pvpSea', 'pvpRain']) $(id).disabled = !st.host;
+    $('pvpStart').disabled = st.players.length < 2;
+    $('pvpStart').textContent = st.players.length < 2 ? 'Start (needs 2+ fish: invite a friend or add a bot)' : `Start (${st.players.length} fish)`;
+  },
+  started() { app.state = 'playing'; showScreen(null); document.activeElement?.blur(); },
+  results(rank, host, s) {
+    app.state = 'results';
+    $('results').classList.toggle('isHost', host);
+    $('results').classList.toggle('isGuest', !host);
+    const mine = rank.find(r => r.me);
+    $('resultsTitle').textContent = mine?.place === 1 ? 'YOU WIN!' : `${rank[0]?.name ?? ''} WINS`;
+    $('resultsList').replaceChildren(...rank.map(r => {
+      const li = document.createElement('li'), img = document.createElement('img'), tag = document.createElement('small');
+      img.src = game.icons[`class-${r.cls}`]; img.alt = '';
+      tag.textContent = ` ${r.score.toLocaleString()} pts \u00B7 ate ${r.eats}${r.bot ? ' \u00B7 bot' : ''}`;
+      if (r.me) li.className = 'me';
+      li.append(img, r.name, tag); // text only
+      return li;
+    }));
+    showScreen('results');
+  },
+  closed(reason, wasPlaying) {
+    app.state = 'menu';
+    window.game?.toMenu();
+    updateMain();
+    openOnline(reason);
+  },
+};
+window.pvpUi = pvpUi; // pvp.js (a module) finds it here
+function pvpSetting() {
+  game.pvp.setSettings({ mode: $('pvpMode').value, time: Number($('pvpTime').value), target: Number($('pvpTarget').value), sea: $('pvpSea').value, rain: $('pvpRain').checked });
+}
+for (const id of ['pvpMode', 'pvpTime', 'pvpTarget', 'pvpSea', 'pvpRain']) $(id).addEventListener('change', pvpSetting);
+$('pvpCode').addEventListener('input', e => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5); });
 
 // ---------- The skill tree, between levels ----------
 // Three dark panels (on a phone held upright: one at a time, picked with tabs), each a web of glowing hexagons joined
@@ -393,6 +478,7 @@ $('ui').addEventListener('click', e => {
   const btn = e.target.closest('button');
   if (!btn || !window.game) return;
   if (btn.dataset.cls) return pickClass(btn.dataset.cls);
+  if (btn.dataset.pvpcls) { settings.pvpCls = btn.dataset.pvpcls; saveSettings(); game.pvp.setCls(btn.dataset.pvpcls); return pvpUi.lobby(game.pvp.state); }
   if (btn.dataset.keep) return toggleKeep(btn.dataset.keep);
   if (btn.dataset.tab) { treeTab = btn.dataset.tab; return drawTree(); }
   if (btn.dataset.node) { treeSel = btn.dataset.node; drawTree(); return $('learnBtn').hidden ? null : $('learnBtn').focus({ preventScroll: true }); }
@@ -405,6 +491,15 @@ $('ui').addEventListener('click', e => {
   else if (action === 'play') startRun();
   else if (action === 'resume') resumeGame();
   else if (action === 'menu') toMenu();
+  else if (action === 'online') openOnline();
+  else if (action === 'pvp-create') goOnline(false);
+  else if (action === 'pvp-join') goOnline(true);
+  else if (action === 'pvp-copy') { navigator.clipboard?.writeText(game.pvp.state.code).catch(() => {}); btn.textContent = 'Copied!'; setTimeout(() => { btn.textContent = 'Copy the code'; }, 1500); }
+  else if (action === 'pvp-addbot') game.pvp.addBot();
+  else if (action === 'pvp-removebot') game.pvp.removeBot();
+  else if (action === 'pvp-start') game.pvp.start();
+  else if (action === 'pvp-rematch') game.pvp.rematch();
+  else if (action === 'pvp-leave') { game.pvp.leave(); toMenu(); }
   else if (action === 'settings') openSettings();
   else if (action === 'board') openBoard();
   else if (action === 'signin') signIn();
@@ -454,6 +549,7 @@ function endStick(e) {
 }
 addEventListener('pointerdown', e => {
   if (e.target.closest?.('button, a, label, input') || app.state !== 'playing') return; // menu taps aren't game input
+  if (game.pvp.match?.out) return game.pvp.nextWatch(); // out of the match: a tap watches the next fish
   if (e.pointerType === 'mouse') { // the fish follows the mouse; a click boosts
     input.mouse = { x: e.clientX, y: e.clientY };
     if (e.button === 0) game.boost();

@@ -200,5 +200,24 @@ check('Barracuda at level 3, Orca for beating an apex, Swordfish for opening a p
 check('starters play differently', computeStats('barracuda', []).speed === 1.2 && computeStats('orca', []).shields === 1 && computeStats('orca', []).speed < 1 && computeStats('swordfish', []).torpedo && computeStats('swordfish', []).boostSpeed > 1);
 check('every starter\'s free skill is a real top-row skill', CLASSES.every(c => !c.free || findNode(c.free)?.row === 0));
 
+// ---------- PvP ----------
+{
+  const [PVP, pvpTier, eatPlayerPoints, ranking, leaderOf, pvpWinner, respawnSpot, mulberry32] = ['PVP', 'pvpTier', 'eatPlayerPoints', 'ranking', 'leaderOf', 'pvpWinner', 'respawnSpot', 'mulberry32'].map(n => vm.runInThisContext(n));
+  check('PvP sizes go 1 to 5 as the meter fills', pvpTier(0) === 1 && pvpTier(PVP.perTier - 0.1) === 1 && pvpTier(PVP.perTier) === 2 && pvpTier(PVP.perTier * 4) === 5 && pvpTier(1e6) === 5);
+  check('eating a bigger player is worth much more, and the leader double', eatPlayerPoints(1) < eatPlayerPoints(2) && eatPlayerPoints(3) === PVP.eatPoints * 9 && eatPlayerPoints(3, true) === eatPlayerPoints(3) * 2);
+  const ps = [{ id: 'a', tier: 2, score: 900, out: false }, { id: 'b', tier: 4, score: 300, out: false }, { id: 'c', tier: 1, score: 2000, out: true, outAt: 30 }, { id: 'd', tier: 3, score: 100, out: true, outAt: 50 }];
+  check('Most Points ranks by points', ranking(ps, 'points').map(p => p.id).join() === 'c,a,b,d');
+  check('Last Fish Standing ranks survivors (biggest first), then the last to go out', ranking(ps, 'lfs').map(p => p.id).join() === 'b,a,d,c');
+  check('the crown goes to the leader (not someone already out)', leaderOf(ps, 'lfs') === 'b' && leaderOf(ps.filter(p => !p.out), 'points') === 'a' && leaderOf([{ id: 'x', score: 0, tier: 1 }, { id: 'y', score: 0, tier: 1 }], 'points') === null);
+  check('Last Fish Standing ends when one fish is left', !pvpWinner('lfs', ps) && pvpWinner('lfs', ps.map(p => ({ ...p, out: p.id !== 'b' })))[0].id === 'b');
+  check('with a time limit, time up ends it: the biggest survivor wins Last Fish Standing', pvpWinner('lfs', ps, { timeUp: true })[0].id === 'b');
+  check('Most Points ends at the target or when time is up', !pvpWinner('points', ps, { target: 5000 }) && pvpWinner('points', ps, { target: 2000 })[0].id === 'c' && pvpWinner('points', ps, { timeUp: true })[0].id === 'c');
+  check('a match needs two fish', pvpWinner('lfs', [ps[0]]) === null);
+  const me = { id: 'm', tier: 2 }, big = [{ id: 'k', tier: 4, x: 0, y: 0 }, me], rnd = mulberry32(3), spots = Array.from({ length: 20 }, () => respawnSpot(big, me, rnd));
+  check('respawn spots keep away from bigger fish', spots.every(s => Math.hypot(s.x, s.y) > 1500), Math.round(Math.min(...spots.map(s => Math.hypot(s.x, s.y)))));
+  check('every starter has PvP tuning, and none is faster and bigger-biting at once', CLASSES.every(c => c.pvp?.mods && c.pvp.desc) && CLASSES.every(c => !((c.pvp.mods.speed ?? 1) > 1 && (c.pvp.mods.reach ?? 1) > 1)));
+  check('PvP stats use the PvP tuning', computeStats('barracuda', [], true).speed === 1.15 && computeStats('barracuda', []).speed === 1.2 && computeStats('orca', [], true).regrow === 40);
+}
+
 console.log(failed ? `\n${failed} check(s) failed` : '\nall checks passed');
 process.exit(failed ? 1 : 0);

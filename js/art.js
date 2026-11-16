@@ -803,3 +803,70 @@ export function makePortal() {
   root.add(ring, swirl, orb);
   return { root, swirl, orb };
 }
+
+// ---------- Power-up indicators ----------
+// Worn by a fish (in its own size units, so they grow with it): a see-through bubble for a shield, a blue glow for
+// Rush, a purple glow on a shrunk fish, and sparks over a stunned one.
+const auraGeo = new THREE.SphereGeometry(1, 16, 12);
+const auraMats = {
+  shield: new THREE.MeshStandardMaterial({ color: 0xbff4ff, emissive: 0x2a8fb0, transparent: true, opacity: 0.28, roughness: 0.05, depthWrite: false }),
+  shrink: new THREE.MeshBasicMaterial({ color: 0xb36bff, transparent: true, opacity: 0.35, depthWrite: false, blending: THREE.AdditiveBlending }),
+};
+export function makeAura() {
+  const group = new THREE.Group();
+  const shield = new THREE.Mesh(auraGeo, auraMats.shield);
+  shield.scale.set(0.66, 0.42, 0.42);
+  const rush = new THREE.Mesh(auraGeo, new THREE.MeshBasicMaterial({ color: 0x3fc8ff, transparent: true, opacity: 0.35, depthWrite: false, blending: THREE.AdditiveBlending }));
+  rush.scale.set(0.62, 0.3, 0.3);
+  const shrink = new THREE.Mesh(auraGeo, auraMats.shrink);
+  shrink.scale.set(0.58, 0.32, 0.32);
+  const spark = makeBadge('✦', '#ffb000', 1);
+  spark.scale.setScalar(0.35);
+  spark.position.y = 0.42;
+  for (const m of [shield, rush, shrink, spark]) { m.visible = false; m.renderOrder = 3; }
+  group.add(shield, rush, shrink, spark);
+  return { group, shield, rush, shrink, spark };
+}
+// A flat ring on the play plane (radius 1), for Shock's jolt and Shrink's wave; the game grows and fades it.
+const ringGeo = new THREE.RingGeometry(0.92, 1, 48);
+export function makeRing(color) {
+  return new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.8, depthWrite: false, side: THREE.DoubleSide, fog: false }));
+}
+// A gold crown, worn above the online match's leader (size 1; the game scales it).
+export function makeCrown() {
+  const g = new THREE.Group(), gold = new THREE.MeshStandardMaterial({ color: 0xffd23b, emissive: 0x6a4a00, metalness: 0.7, roughness: 0.3, flatShading: true });
+  g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.45, 0.35, 10, 1, true), gold));
+  for (let k = 0; k < 5; k++) {
+    const a = k / 5 * Math.PI * 2, tip = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.4, 4), gold);
+    tip.position.set(Math.cos(a) * 0.45, 0.35, Math.sin(a) * 0.45);
+    g.add(tip);
+  }
+  return g;
+}
+// A name tag over another player's fish: a sprite with their name and size, redrawn when either changes.
+export function makeTag() {
+  const cv = document.createElement('canvas');
+  cv.width = 256; cv.height = 64;
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, fog: false, transparent: true }));
+  s.renderOrder = 11;
+  let last = '';
+  s.userData.set = (name, size, color = '#ffffff') => {
+    const key = `${name}/${size}/${color}`;
+    if (key === last) return;
+    last = key;
+    const g = cv.getContext('2d');
+    g.clearRect(0, 0, 256, 64);
+    g.font = 'bold 26px Nunito, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    const text = `${name} · ${size}`, w = Math.min(250, g.measureText(text).width + 24);
+    g.fillStyle = 'rgba(8,30,45,0.6)';
+    g.beginPath(); g.roundRect(128 - w / 2, 12, w, 40, 20); g.fill();
+    g.fillStyle = color;
+    g.fillText(text, 128, 33, 230);
+    tex.needsUpdate = true;
+  };
+  return s;
+}

@@ -156,7 +156,7 @@ const combosFor = owned => COMBOS.filter(c => c.needs.every(n => owned.includes(
 
 // Your stats, rebuilt from scratch from your class and the nodes you own (so stacking can't drift).
 const ADD_STATS = ['shields', 'gulps', 'secondWind', 'refund', 'comboGap', 'comboMax', 'apexDamage', 'boostCharges', 'regrow'];
-function computeStats(classKey, owned) {
+function computeStats(classKey, owned, pvp = false) {
   const s = { speed: 1, reach: 1, growth: 1, boostRecharge: 1, boostTime: 1, boostSpeed: 1, variants: 1, notice: 1, chase: 1, stun: 1, oysterOpen: 1, pearlMul: 1,
     shields: 0, gulps: 0, secondWind: 0, refund: 0, comboGap: COMBO_GAP, comboMax: COMBO_MAX, apexDamage: 0, boostCharges: 1, regrow: 0,
     torpedo: false, wake: false, ghostFin: false, magnet: false, ironJaw: false, shardSense: false, ink: false, mimic: false, oysterProof: false, combos: {} };
@@ -167,7 +167,8 @@ function computeStats(classKey, owned) {
       else s[k] *= v;
     }
   };
-  apply(CLASSES.find(c => c.key === classKey)?.mods ?? {});
+  const cls = CLASSES.find(c => c.key === classKey);
+  apply((pvp ? cls?.pvp?.mods : null) ?? cls?.mods ?? {}); // online matches use the starter's PvP tuning
   for (const id of owned) { const n = findNode(id); if (n) apply(n.mods); }
   for (const c of combosFor(owned)) s.combos[c.key] = true;
   return s;
@@ -181,4 +182,41 @@ function classUnlocked(cls, progress) {
   if (u.apex) return !!progress.apexBeaten;
   if (u.portal) return (progress.portals ?? 0) > 0;
   return progress.bestScore >= u.score;
+}
+
+// ---------- PvP ----------
+// Your size from the meter: 1 to start, one more every PVP.perTier, up to PVP.tiers.
+const pvpTier = meter => Math.min(PVP.tiers, 1 + Math.floor(Math.max(0, meter) / PVP.perTier));
+// Points for eating another player: bigger fish are worth much more; the crowned leader is worth double.
+const eatPlayerPoints = (victimTier, leader = false) => PVP.eatPoints * victimTier * victimTier * (leader ? PVP.crown : 1);
+// Who's ahead. players: [{ id, out, tier, score, outAt }]. Most Points: the most points. Last Fish Standing: those
+// still in first, biggest first, then points; those out by how long they lasted.
+function ranking(players, mode) {
+  const by = mode === 'lfs'
+    ? (a, b) => (!!a.out - !!b.out) || (a.out ? (b.outAt ?? 0) - (a.outAt ?? 0) : (b.tier - a.tier) || (b.score - a.score))
+    : (a, b) => (b.score - a.score) || (b.tier - a.tier);
+  return [...players].sort(by);
+}
+// The crowned leader's id (null until someone's ahead: nobody wears it at 0 points).
+function leaderOf(players, mode) {
+  const top = ranking(players, mode)[0];
+  return top && !top.out && (top.score > 0 || mode === 'lfs' && players.length > 1) ? top.id : null;
+}
+// Is the match over? Returns the final ranking, or null to play on.
+// Last Fish Standing: one fish left (or time's up). Most Points: time's up, or someone reached the target.
+function pvpWinner(mode, players, { timeUp = false, target = 0 } = {}) {
+  if (players.length < 2) return null;
+  const over = timeUp || (mode === 'lfs' ? players.filter(p => !p.out).length <= 1 : target > 0 && players.some(p => p.score >= target));
+  return over ? ranking(players, mode) : null;
+}
+// Where to come back after being eaten: of a dozen random spots, the one furthest from any fish your size or bigger.
+function respawnSpot(players, me, rand = Math.random) {
+  const threats = players.filter(p => p.id !== me.id && !p.out && p.tier >= me.tier);
+  let best = null, far = -1;
+  for (let i = 0; i < 12; i++) {
+    const s = { x: (rand() * 2 - 1) * (WORLD.x - 600), y: (rand() * 2 - 1) * (WORLD.y - 350) };
+    const d = threats.length ? Math.min(...threats.map(p => Math.hypot(p.x - s.x, p.y - s.y))) : 1e9;
+    if (d > far) { far = d; best = s; }
+  }
+  return best;
 }

@@ -122,6 +122,37 @@ No build step and no asset files: three.js loads from a CDN through an import ma
   | Orca | survives a bite each level, but slower (starts with Camouflage) | beat the reef's apex |
   | Swordfish | Spear: eats fish its own size while boosting; the fastest boost, but a slow recharge | open a portal |
 
+## Play online (PvP, up to 8 fish)
+
+- **Rooms:** Play online, pick a name, then **Create a room** (you get a 5-letter code to share) or **Join** with a friend's code.
+- **The lobby:**
+  - Everyone picks a fish; all four are open online, with PvP tuning.
+  - The host sets the **mode**, the **time limit** (off / 3 / 5 / 10 min), the score to win (Most Points with no time limit), the **sea** (Sunny Reef / Kelp Forest) and **Power-up rain**.
+  - The host can **add bots** to fill seats, so you can try it alone. A match needs 2-8 fish.
+- **The match:** everyone starts small, spread out, after a 3-2-1 countdown, in one level of the chosen sea, with its rocks, arch doors, oysters and power-ups.
+  - **Sizes 1-5:** grow by eating. Bigger players eat smaller ones; the same size just bumps.
+  - **Eating a player** scores 300 × their size² (a size-4 fish is worth 4,800), plus a big meal.
+  - **Crown bounty:** the leader wears a gold crown and is worth double.
+- **Last Fish Standing:** eaten means out, and you watch the others (tap to switch who). The last fish wins; with a time limit, the biggest survivor wins when time's up.
+- **Most Points:** eaten means back in 3 s at **the same size**, at a random spot away from bigger fish, keeping your points. The most points when time's up wins (or the first to the target, with no time limit).
+- **On screen:**
+  - a live scoreboard (top 3 plus you)
+  - a kill feed
+  - name tags with sizes
+  - edge arrows to power-up bubbles and the nearest pearls
+  - power-up indicators on every fish: a shield bubble, Rush's blue glow, purple shrunk fish, sparks over stunned ones
+- **Power-ups online:**
+  - Shock also zaps nearby players (a 1.5 s stun).
+  - **Power-up rain** drops bubbles 3× as often, up to 3 at once.
+- **Afterwards:** the results show place, points and fish eaten. The host's **Rematch** takes everyone back to the lobby.
+- **How it works (engineering):**
+  - The match runs browser to browser over **WebRTC** data channels, with the host as the hub.
+  - Supabase Realtime (the Arcade's shared project) is used only to find each other: presence for who's in the room, and a two-message connection handshake. (The free plan allows only 100 Realtime messages a second for the whole project.)
+  - Each player moves their own fish and sends it 20× a second. The host runs the sea fish, bubbles, bites between players, the timer and the crown, and sends each guest the sea around it 12× a second.
+  - Eating a sea fish, grabbing a bubble or a pearl is claimed by whoever did it, and the host settles ties. Bots run on the host.
+  - Code: `js/net.js` (rooms), `js/pvp.js` (lobby and match), and the PvP rules in `js/rules.js`.
+  - **Known limit:** some networks (often mobile data) block direct browser-to-browser connections. The joiner then sees "Couldn't connect to the host"; a TURN relay would fix it if needed.
+
 ## Replay and competition hooks
 
 - A score, always: points per fish × combo, plus a clear bonus per level. Your best score and level are saved.
@@ -144,6 +175,10 @@ No build step and no asset files: three.js loads from a CDN through an import ma
 ## Testing
 
 - `node tools/check.js`: checks the rules in Node (tiers, growth, combos, the spawner's seed and food share).
+- `node tools/pvp-test.js`: online matches with 3 players as pages in one browser, over a local stand-in for the network (`?net=local`).
+  - It covers the lobby, settings and bots, the countdown, syncing fish and the sea, Power-up rain, shields, edge arrows, players eating players, respawns, the crown, the timer, results, rematch, Last Fish Standing, and the host leaving.
+  - `--real` plays two pages over the real Supabase + WebRTC.
+  - `--tourney 20` runs bot matches to check the four starters are balanced.
 - `node tools/playtest.js`: plays the real page headlessly on a phone and a desktop screen. It covers:
   - the menus and settings
   - a real joystick drag, the mouse and the arrow keys

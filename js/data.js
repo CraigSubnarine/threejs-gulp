@@ -14,7 +14,7 @@ const WORLD = { x: 6600, y: 1400 };   // half-width and half-height (a wide sea 
 // Rock pillars and arches on the play plane: you and the fish can't swim through them, so prey can be cornered
 // against them (and you can hide behind them). count per level; clear: no obstacles this close to where you start.
 const OBSTACLES = { count: 13, clear: 1400 }; // arches have cracked doors at the bottom of their legs: boost to smash through
-const VIEW_H = [0, 1200, 1500, 1850]; // how much of the plane the camera shows (height) at your tier 1, 2, 3 (× the Zoom setting)
+const VIEW_H = [0, 1200, 1500, 1850, 2250, 2700]; // how much of the plane the camera shows (height) at your tier 1, 2, 3 (4, 5: PvP) (× the Zoom setting)
 // The Zoom setting: how much further out (or closer) the camera sits than normal.
 const ZOOM = { close: 0.85, normal: 1, far: 1.2 };
 // tilt: degrees the camera looks down on the sea; sway: degrees it swings round as you swim sideways;
@@ -285,17 +285,38 @@ const COMBOS = [
 // ---------- Classes: the kind of fish you start as ----------
 // You start as a young one (tier 1) whatever you are. mods work like skill mods; free: a skill you start with (and
 // keep through portals); unlock: what opens it up (best level reached, beating an apex, opening a portal).
+// pvp: its mods and description in online matches (all four are open there), tuned so none dominates.
 // spec: how it looks.
 const CLASSES = [
   { key: 'shark', name: 'Shark', desc: 'An all-rounder with a bigger bite', mods: { reach: 1.12 }, free: null, unlock: null,
+    pvp: { mods: { reach: 1.08 }, desc: 'An all-rounder with a slightly bigger bite' },
     spec: { shape: 'torpedo', body: 0x6f8494, belly: 0xf1f5f8, fin: 0x52687a, eye: 1.2, dorsal: 1.7 } },
   { key: 'barracuda', name: 'Barracuda', desc: '+20% speed and a quicker boost, but a smaller bite', mods: { speed: 1.2, boostRecharge: 0.8, reach: 0.85 }, free: 'fastFins',
+    pvp: { mods: { speed: 1.15, boostRecharge: 0.8, reach: 0.85 }, desc: '+15% speed and a quicker boost, but a smaller bite' },
     unlock: { level: 3, text: 'Reach level 3' },
     spec: { shape: 'torpedo', body: 0x8fa3b4, belly: 0xeef4f8, fin: 0x4f6a7c, stripe: 0x34495a, stripes: [-0.3, -0.15, 0, 0.15], eye: 1.3, teeth: true } },
   { key: 'orca', name: 'Orca', desc: 'Tough: survives one bite per level, but 13% slower', mods: { speed: 0.87, shields: 1 }, free: 'camouflage',
+    pvp: { mods: { speed: 0.93, reach: 1.05, shields: 1, regrow: 40 }, desc: 'A shield that spits out one bite and regrows after 40 s, but 7% slower' },
     unlock: { apex: true, text: 'Beat the reef\'s apex' },
     spec: { shape: 'orca', body: 0x16181d, belly: 0xf4f6f8, fin: 0x16181d, eye: 0.9, dorsal: 2.2, patch: true } },
   { key: 'swordfish', name: 'Swordfish', desc: 'Spear: eats fish its own size while boosting. The fastest boost, but a slow recharge', mods: { boostSpeed: 1.3, boostRecharge: 1.35, torpedo: true }, free: null,
+    pvp: { mods: { boostSpeed: 1.2, boostRecharge: 1.45, torpedo: true }, desc: 'Spear: eats sea fish its own size while boosting (not players), but its boost recharges slowly' },
     unlock: { portal: true, text: 'Open a portal' },
     spec: { shape: 'torpedo', body: 0x3b5f8f, belly: 0xdde8f2, fin: 0x2a4670, eye: 1.3, bill: true, dorsal: 1.4 } },
 ];
+
+// ---------- PvP: online rooms of up to 8 fish ----------
+// Sizes go from 1 to 5 (tiers): the meter fills perTier for each size up. Eating another player scores eatPoints ×
+// their size², and the leader (wearing the crown) is worth crown × as much. In Most Points you come back respawn
+// seconds after being eaten, at the same size, somewhere away from bigger fish, safe for safe seconds.
+// rain: Power-up rain makes bubbles this many times as frequent, with up to this many at once.
+// stateHz / snapHz: how often each player sends its fish, and how often the host sends the sea.
+const PVP = {
+  max: 8, tiers: 5, perTier: 20, eatPoints: 300, eatGrow: 12, crown: 2, respawn: 3, safe: 2, rain: 3, countdown: 3,
+  stateHz: 20, snapHz: 12,
+  modes: { lfs: 'Last Fish Standing', points: 'Most Points' },
+  times: [0, 180, 300, 600],          // seconds; 0 = no time limit
+  targets: [10000, 25000, 50000],     // Most Points with no time limit: first to this score
+  seas: ['reef', 'kelp'],
+  botNames: ['Bubbles', 'Finn', 'Coral', 'Nemo-ish', 'Gill', 'Snapper', 'Kelpie', 'Murk'],
+};

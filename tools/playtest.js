@@ -311,7 +311,7 @@ async function run(browser, name, options) {
   await shot('02d-oyster');
 
   // ---------- Power-ups ----------
-  const take = kind => page.evaluate(k => { const P = __P(); game.spawnPickup(k, P.x + 10, P.y); game.update(1 / 60); return { gone: !game.G.pickup, power: P.power?.kind ?? null }; }, kind);
+  const take = kind => page.evaluate(k => { const P = __P(); game.spawnPickup(k, P.x + 10, P.y); game.update(1 / 60); return { gone: !game.G.pickups.length, power: P.power?.kind ?? null }; }, kind);
   await page.evaluate(() => { const P = __P(); Object.assign(P, { x: 0, y: 0, vx: 0, vy: 0, safe: 1e6 }); __step(90); __clear(); }); // let the camera catch up, or new fish count as off screen
   const shock = await page.evaluate(async () => {
     const P = __P(), f = __put('grouper', 320, 0);
@@ -351,11 +351,11 @@ async function run(browser, name, options) {
     P.x = 0; P.y = 0;
     g.pickT = 0.01;
     game.update(1 / 60);
-    const p = g.pickup, y0 = p?.y;
+    const p = g.pickups[0], y0 = p?.y;
     for (let i = 0; i < 120; i++) game.update(1 / 60);
-    out.came = !!p; out.falls = p && g.pickup === p && p.y < y0 - 100;
+    out.came = !!p; out.falls = p && g.pickups.includes(p) && p.y < y0 - 100;
     for (let i = 0; i < 60 * PICKUPS.life; i++) game.update(1 / 60);
-    out.pops = g.pickup !== p;
+    out.pops = !g.pickups.includes(p);
     return out;
   });
   check(`${name}: a power-up bubble drifts down now and then, and pops if you leave it`, drift.came && drift.falls && drift.pops, JSON.stringify(drift));
