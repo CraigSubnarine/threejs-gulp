@@ -5,6 +5,10 @@
 // a match through.) With ?net=local, a BroadcastChannel stands in for both, so the headless tests can run several
 // players as pages in one browser with no network.
 //
+// When two players can't connect directly (some routers and networks block it), that player's match messages go
+// through Supabase instead: a private channel between them and the host, at RELAY_HZ for the frequent ones. It's
+// rougher, and the project's message cap allows only RELAY_MAX relayed players per room.
+//
 // openRoom() returns a room: { code, me, isHost, hostId, send(msg), sendFast(msg), sendTo(id, msg), leave(), on(type, fn) }
 // Guests' send goes to the host; the host's send goes to every guest. sendFast is unreliable and unordered (positions).
 // Events: 'join' (id), 'leave' (id), 'msg' (from, msg), 'closed' (reason).
@@ -15,6 +19,8 @@ export const cleanCode = text => String(text).toUpperCase().replace(/[^A-Z0-9]/g
 export const newId = () => Math.random().toString(36).slice(2, 10);
 const ICE = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun.cloudflare.com:3478' }];
 const MAX_PLAYERS = 8;
+const RELAY_HZ = 6, RELAY_MAX = 3, DIRECT_WAIT = 7000; // ms to wait for a direct connection before using the relay
+const forceRelay = new URLSearchParams(location.search).get('relay') === '1'; // (tests: go straight to the relay)
 export const localNet = new URLSearchParams(location.search).get('net') === 'local';
 
 function emitter() {
@@ -35,6 +41,7 @@ function localRoom(code, host, me) {
   const post = (to, m) => bc.postMessage({ from: me, to, m });
   const room = {
     code, me, isHost: host, get hostId() { return hostId; }, peers: () => [...peers.keys()],
+    relayed: () => false, // (the stand-in has no relay)
     send(m) { if (host) for (const id of peers.keys()) post(id, m); else post(hostId, m); },
     sendFast(m) { room.send(m); },
     sendTo(id, m) { post(id, m); }, // (fast or not: a BroadCastChannel is always reliable)
@@ -102,8 +109,20 @@ const gathered = (pc, ms = 3000) => new Promise(res => {
 });
 
 function rtcRoom(code, host, me) {
-  const ev = emitter(), peers = new Map(); // id -> { pc, r (reliable), u (fast) }
+  const ev = emitter(), peers = new Map(); // id -> { pc, r (reliable), u (fast) } or, relayed, { relay (a channel), fast }
   let hostId = host ? me : null, closed = false;
+  // The relay: a channel just for one guest and the host. Fast messages are thinned to RELAY_HZ (only the latest goes).
+  const openRelay = (guestId, peerId) => new Promise((res, rej) => {
+    const ch = supa().channel(`gulp-room-${code}-relay-${guestId}`, { config: { broadcast: { self: false } } });
+    ch.on('broadcast', { event: 'm' }, ({ payload }) => { if (!closed) ev.emit('msg', peerId, payload); });
+    ch.subscribe(status => {
+      if (status === 'SUBSCRIBED') res(ch);
+      else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') rej(new Error('relay'));
+    });
+  });
+  const relayTick = setInterval(() => {
+    for (const p of peers.values()) if (p.relay && p.fast) { p.relay.send({ type: 'broadcast', event: 'm', payload: p.fast }); p.fast = null; }
+  }, 1000 / RELAY_HZ);
   const channel = supa().channel(`gulp-room-${code}`, { config: { presence: { key: me }, broadcast: { self: false } } });
   const wire = (id, r, u) => {
     const p = peers.get(id) ?? {};
@@ -111,12 +130,17 @@ function rtcRoom(code, host, me) {
     peers.set(id, p);
     for (const ch of [r, u].filter(Boolean)) ch.onmessage = e => { try { ev.emit('msg', id, JSON.parse(e.data)); } catch {} };
   };
-  const out = (p, m, fast) => { const ch = fast && p?.u?.readyState === 'open' ? p.u : p?.r; if (ch?.readyState === 'open') ch.send(JSON.stringify(m)); };
+  const out = (p, m, fast) => {
+    if (p?.relay) { if (fast) p.fast = m; else p.relay.send({ type: 'broadcast', event: 'm', payload: m }); return; }
+    const ch = fast && p?.u?.readyState === 'open' ? p.u : p?.r;
+    if (ch?.readyState === 'open') ch.send(JSON.stringify(m));
+  };
   const drop = id => {
     const p = peers.get(id);
     if (!p) return;
     peers.delete(id);
     try { p.pc?.close(); } catch {}
+    if (p.relay) supa().removeChannel(p.relay).catch(() => {});
     if (!host && id === hostId) { ev.emit('closed', 'Lost the host. The match has ended.'); room.leave(); } else ev.emit('leave', id);
   };
   const room = {
@@ -124,23 +148,40 @@ function rtcRoom(code, host, me) {
     send(m) { if (host) for (const p of peers.values()) out(p, m); else out(peers.get(hostId), m); },
     sendFast(m) { if (host) for (const p of peers.values()) out(p, m, true); else out(peers.get(hostId), m, true); },
     sendTo(id, m, fast = false) { out(peers.get(id), m, fast); },
+    relayed: id => !!peers.get(id ?? hostId)?.relay, // is this player (a guest: the host) on the relay?
     set locked(v) { channel.track({ id: me, host, locked: !!v }).catch(() => {}); },
     leave() {
       if (closed) return;
       closed = true;
-      for (const p of peers.values()) { try { p.pc?.close(); } catch {} }
+      clearInterval(relayTick);
+      for (const p of peers.values()) { try { p.pc?.close(); } catch {} if (p.relay) supa().removeChannel(p.relay).catch(() => {}); }
       peers.clear();
       supa().removeChannel(channel).catch(() => {});
     },
     on: ev.on,
   };
-  const watch = (id, pc) => pc.addEventListener('connectionstatechange', () => { if (['failed', 'closed'].includes(pc.connectionState)) drop(id); });
+  // A direct connection that fails is dropped, unless that player has moved to the relay meanwhile.
+  const watch = (id, pc) => pc.addEventListener('connectionstatechange', () => {
+    if (['failed', 'closed'].includes(pc.connectionState) && peers.get(id)?.pc === pc && !peers.get(id).relay) drop(id);
+  });
 
   return new Promise((resolve, reject) => {
     const fail = msg => { room.leave(); reject(new Error(msg)); };
     // The host answers each guest's offer; a guest takes the host's answer.
     channel.on('broadcast', { event: 'sig' }, async ({ payload: s }) => {
       if (closed || s.to !== me) return;
+      if (host && s.relay) { // this guest couldn't connect directly
+        const relayed = [...peers.values()].filter(p => p.relay).length;
+        if (relayed >= RELAY_MAX || peers.size + 1 > MAX_PLAYERS) return channel.send({ type: 'broadcast', event: 'sig', payload: { to: s.from, from: me, relayFull: true } });
+        try { peers.get(s.from)?.pc?.close(); } catch {}
+        const ch = await openRelay(s.from, s.from).catch(() => null);
+        if (!ch) return;
+        peers.set(s.from, { relay: ch, joined: true });
+        ch.send({ type: 'broadcast', event: 'm', payload: { $: '__relay' } });
+        ev.emit('join', s.from);
+        return;
+      }
+      if (!host && s.relayFull) return fail("Couldn't connect to the host directly, and the room's relay is full (it takes 3 players). Try another network.");
       if (host && s.offer) {
         if (peers.size + 1 >= MAX_PLAYERS) return;
         const pc = new RTCPeerConnection({ iceServers: ICE });
@@ -184,8 +225,20 @@ function rtcRoom(code, host, me) {
       peers.set(hostId, { pc });
       wire(hostId, r, u);
       watch(hostId, pc);
-      const timer = setTimeout(() => fail("Couldn't connect to the host. Your network may block direct connections; try another network (Wi-Fi or mobile data)."), 15000);
-      r.onopen = () => { clearTimeout(timer); resolve(room); };
+      let done = false;
+      const timer = setTimeout(() => { if (!done) fail("Couldn't connect to the host, even through the relay. Check your connection and try again."); }, DIRECT_WAIT + 12000);
+      r.onopen = () => { if (done) return; done = true; clearTimeout(timer); resolve(room); };
+      // No direct connection in time: ask the host for the relay.
+      setTimeout(async () => {
+        if (done || closed) return;
+        try { pc.close(); } catch {}
+        const ch = await openRelay(me, hostId).catch(() => null);
+        if (!ch || done || closed) return;
+        peers.set(hostId, { relay: ch });
+        ch.on('broadcast', { event: 'm' }, ({ payload }) => { if (payload?.$ === '__relay' && !done) { done = true; clearTimeout(timer); resolve(room); } });
+        channel.send({ type: 'broadcast', event: 'sig', payload: { to: hostId, from: me, relay: true } });
+      }, forceRelay ? 0 : DIRECT_WAIT);
+      if (forceRelay) return;
       await pc.setLocalDescription(await pc.createOffer());
       await gathered(pc);
       channel.send({ type: 'broadcast', event: 'sig', payload: { to: hostId, from: me, offer: pc.localDescription.toJSON() } });

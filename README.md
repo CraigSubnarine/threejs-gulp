@@ -152,7 +152,9 @@ No build step and no asset files: three.js loads from a CDN through an import ma
   - Each player moves their own fish and sends it 20× a second. The host runs the sea fish, bubbles, bites between players, the timer and the crown, and sends each guest the sea around it 12× a second.
   - Eating a sea fish, grabbing a bubble or a pearl is claimed by whoever did it, and the host settles ties. Bots run on the host.
   - Code: `js/net.js` (rooms), `js/pvp.js` (lobby and match), and the PvP rules in `js/rules.js`.
-  - **Known limit:** some networks (often mobile data) block direct browser-to-browser connections. The joiner then sees "Couldn't connect to the host"; a TURN relay would fix it if needed.
+  - **When a direct connection is blocked** (some routers and networks block them; Craig's two PCs on different networks did), the player falls back to a **relay** after 7 s. Their match messages then go through a private Supabase channel with the host. It updates 6 times a second instead of 20, so it's a little less smooth. The lobby marks them "via relay".
+  - The project's message cap allows up to 3 relayed players per room. If bigger rooms need it, add a real TURN server (Cloudflare's free tier, through a small Edge Function).
+  - `node tools/pvp-test.js --relay` runs the whole match test through the relay.
 
 ## Replay and competition hooks
 

@@ -28,6 +28,9 @@ export function createPvp(api) {
     room.send({ $: 'lobby', lobby });
     ui()?.lobby(state());
   }
+  // The host repeats the lobby every 2 s while nobody's playing, so a guest who missed an update (the relay can
+  // drop one) catches up.
+  setInterval(() => { if (room?.isHost && lobby && !M) room.send({ $: 'lobby', lobby }); }, 2000);
   const state = () => ({ code: room?.code, me: me.id, host: room?.isHost, players: lobby?.players ?? [], settings: lobby?.settings ?? defaults() });
   function hookRoom() {
     room.on('join', id => { if (room.isHost && M) room.sendTo(id, { $: 'busy' }); });
@@ -40,10 +43,11 @@ export function createPvp(api) {
     });
     room.on('closed', reason => { const was = !!M; leaveAll(); ui()?.closed(reason, was); });
     room.on('msg', (from, m) => {
+      if (m?.$ === '__relay') return; // the relay saying hello
       if (room.isHost) {
         if (m.$ === 'hello' && lobby && !M) {
           if (lobby.players.length >= PVP.max) return;
-          if (!lobby.players.some(p => p.id === from)) lobby.players.push({ id: from, name: cleanName(m.name), cls: m.cls, bot: false, host: false });
+          if (!lobby.players.some(p => p.id === from)) lobby.players.push({ id: from, name: cleanName(m.name), cls: m.cls, bot: false, host: false, relay: !!room.relayed?.(from) });
           lobbyChanged();
         } else if (m.$ === 'cls' && lobby) {
           const p = lobby.players.find(q => q.id === from);

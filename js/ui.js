@@ -163,7 +163,7 @@ const pvpUi = {
     $('lobbyPlayers').replaceChildren(...st.players.map(p => {
       const li = document.createElement('li'), img = document.createElement('img'), tag = document.createElement('small');
       img.src = game.icons[`class-${p.cls}`]; img.alt = '';
-      tag.textContent = [p.host && ' host', p.bot && ' bot', p.id === st.me && ' you'].filter(Boolean).join(' \u00B7');
+      tag.textContent = [p.host && ' host', p.bot && ' bot', p.relay && ' via relay', p.id === st.me && ' you'].filter(Boolean).join(' \u00B7');
       li.append(img, p.name, tag); // names are player input: text only
       return li;
     }));

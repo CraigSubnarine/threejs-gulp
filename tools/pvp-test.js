@@ -8,7 +8,8 @@ const fs = require('fs');
 const { chromium } = (() => { try { return require('playwright'); } catch { return require('playwright-core'); } })();
 const { serve } = require('./server');
 
-const REAL = process.argv.includes('--real');
+const REAL = process.argv.includes('--real') || process.argv.includes('--relay');
+const RELAY = process.argv.includes('--relay'); // the guest skips the direct connection and uses the relay
 const out = path.resolve(__dirname, '..', 'playtest-output');
 fs.mkdirSync(out, { recursive: true });
 const failures = [];
@@ -64,20 +65,20 @@ function harness() {
       check('no page errors', !errors.length, errors.slice(0, 3).join(' | '));
       return;
     }
-    const open = async name => {
+    const open = async (name, extra = '') => {
       const page = await ctx.newPage();
       page.on('pageerror', e => errors.push(`${name}: ${e.message}`));
       page.on('console', m => { if (m.type() === 'error') errors.push(`${name}: ${m.text()}`); });
-      await page.goto(url);
+      await page.goto(url + (extra && (url.includes('?') ? extra : `?${extra.slice(1)}`)));
       await page.waitForFunction(() => !!window.game, null, { timeout: 30000 });
       await page.evaluate(harness);
       return page;
     };
-    const pages = { host: await open('host'), a: await open('a') };
+    const pages = { host: await open('host'), a: await open('a', RELAY ? '&relay=1' : '') };
     if (!REAL) pages.b = await open('b');
     const all = () => Object.values(pages);
     // Step every page a little at a time, so their messages flow between them.
-    const run = async (frames, chunk = 6) => { for (let f = 0; f < frames; f += chunk) { for (const p of all()) await p.evaluate(n => __step(n), chunk); await wait(REAL ? 20 : 2); } };
+    const run = async (frames, chunk = 6) => { for (let f = 0; f < frames; f += chunk) { for (const p of all()) await p.evaluate(n => __step(n), chunk); await wait(RELAY ? 110 : REAL ? 20 : 2); } }; // the relay sends 6 times a second of real time
     const shot = (page, file) => page.screenshot({ path: path.join(out, `pvp-${file}.png`), timeout: 45000 }).catch(e => check(`screenshot ${file}`, false, e.message.split('\n')[0]));
 
     // ---------- The lobby ----------
@@ -88,6 +89,7 @@ function harness() {
     await wait(REAL ? 2500 : 300);
     const roster = await Promise.all(all().map(p => p.evaluate(() => game.pvp.state.players.map(q => `${q.name}:${q.cls}`).join())));
     check('everyone in the room sees the same player list', roster.every(r => r === roster[0]) && roster[0].split(',').length === all().length, roster[0]);
+    if (RELAY) check('the guest joined through the relay', await pages.host.evaluate(() => game.pvp.state.players.some(p => p.relay)));
     await pages.host.evaluate(() => { game.pvp.setSettings({ mode: 'points', time: 180, rain: true }); game.pvp.addBot(); });
     await wait(REAL ? 1500 : 200);
     const seen = await pages.a.evaluate(() => ({ s: game.pvp.state.settings, n: game.pvp.state.players.length, bot: game.pvp.state.players.some(p => p.bot) }));
